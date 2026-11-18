@@ -58,7 +58,7 @@ async function main() {
   const id = deviceIdFromPublicKey(kp.publicKey);
   const dataDir = path.join(work, 'master', 'MasterServerData');
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ port, setupDone: true, ai: { mode: 'managed', managedPort: port + 11 } }));
+  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ port, setupDone: true, ai: { mode: 'managed', managedPort: port + 11 }, link: { code: 'K7QM2-XW4PH', wifi: false } }));
   fs.writeFileSync(
     path.join(dataDir, 'devices.json'),
     JSON.stringify({ version: 1, revokedKeys: [], devices: [{ id, name: 'Packaged test', publicKey: kp.publicKey, status: 'approved', internet: true, ai: true, allowedModels: null, defaultModel: null, limits: DEFAULT_LIMITS, createdAt: Date.now(), approvedAt: Date.now(), pairingCode: '000000' }] }),

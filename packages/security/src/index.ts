@@ -298,3 +298,4 @@ export function redact(text: string): string {
     .replace(/\bfreellmapi-[A-Za-z0-9_-]{8,}/gi, '[redacted-key]')
     .replace(/("?(?:api[_-]?key|apikey|authorization|token|secret|password)"?\s*[:=]\s*"?)[^"\s,}]{6,}/gi, '$1[redacted]');
 }
+export * from './link';

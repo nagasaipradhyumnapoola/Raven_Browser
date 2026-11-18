@@ -60,8 +60,10 @@ export interface GatewayDeps {
   rpcHandler?: (device: DeviceRecord, method: string, params: unknown) => Promise<unknown>;
   /** whether agent tasks are available to this device (host decides) */
   agentsFor?: (device: DeviceRecord) => boolean;
-  /** addresses outside the LAN this master is reachable at (router port mapping), host:port */
+  /** addresses outside the LAN this master is reachable at (router port mapping, Raven Wi-Fi), host:port */
   extraRoutes?: () => string[];
+  /** addresses always offered to devices (Raven Wi-Fi), host:port */
+  alwaysRoutes?: () => string[];
 }
 
 export interface LogEvent {
@@ -190,6 +192,8 @@ export class GatewayServer extends EventEmitter {
   private wss: WebSocketServer | null = null;
   private sessions = new Set<Session>();
   private byDevice = new Map<string, Session>();
+  /** when the owner was last alerted about each waiting device */
+  private alerted = new Map<string, number>();
   private seq = 1;
   private aiWindows = new Map<string, RateWindow>();
   private ipAttempts = new Map<string, RateWindow>();
@@ -543,6 +547,11 @@ export class GatewayServer extends EventEmitter {
         devices.setStatus(deviceId, 'approved');
         this.log('security', `Device "${device.name}" auto-approved (temporary LAN auto-approve is on).`, deviceId);
       }
+      if (device.status === 'pending') this.emit('pairing-request', device);
+      this.alerted.set(deviceId, Date.now());
+    } else if (device.status === 'pending' && Date.now() - (this.alerted.get(deviceId) ?? 0) > 60_000) {
+      // Still waiting: remind the owner (the first alert may have been dismissed or missed).
+      this.alerted.set(deviceId, Date.now());
       this.emit('pairing-request', device);
     }
     if (device.status === 'revoked') return this.deny(sess, 'device_revoked');
@@ -645,7 +654,7 @@ export class GatewayServer extends EventEmitter {
       latestBrowserVersion: this.cfg.latestBrowserVersion,
       agents: usable && !!this.deps.agentsFor?.(device),
       // Every address a paired device may try when the one it used stops working (changing networks).
-      routes: usable ? [...new Set([...(process.env.RAVEN_BIND ? [process.env.RAVEN_BIND] : lanAddresses()).map((a) => `${a}:${this.cfg.port}`), ...(sw.remote ? this.deps.extraRoutes?.() ?? [] : [])])].slice(0, 12) : [],
+      routes: usable ? [...new Set([...(process.env.RAVEN_BIND ? [process.env.RAVEN_BIND] : lanAddresses()).map((a) => `${a}:${this.cfg.port}`), ...(this.deps.alwaysRoutes?.() ?? []), ...(sw.remote ? this.deps.extraRoutes?.() ?? [] : [])])].slice(0, 12) : [],
     };
   }
 

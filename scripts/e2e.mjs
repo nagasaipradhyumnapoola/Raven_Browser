@@ -126,7 +126,7 @@ const llmUrl = `http://127.0.0.1:${llm.address().port}`;
 const gwPort = await freePort();
 
 function run(app, env, label) {
-  const p = spawn(electron, [path.join(root, 'build', app)], { env: { ...process.env, RAVEN_HEADLESS: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const p = spawn(electron, [path.join(root, 'build', app)], { env: { ...process.env, RAVEN_HEADLESS: '1', RAVEN_FAKE_HOTSPOT: '1', RAVEN_FAKE_WIFI: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let log = '';
   p.stdout.on('data', (d) => (log += d));
   p.stderr.on('data', (d) => (log += d));
@@ -159,7 +159,16 @@ const masterScript = `(async () => {
       if (Date.now() - firstSeen[d.id] > 1500) await inv('approveDevice', d.id);
     }
   }, 400);
-  return { ai: r };
+  // Raven Wi-Fi: a link code exists, the master's own network is on, and the switch works.
+  await new Promise((res) => setTimeout(res, 300));
+  const l1 = (await inv('state')).data.link;
+  await inv('setLinkWifi', false);
+  await new Promise((res) => setTimeout(res, 300));
+  const l2 = (await inv('state')).data.link;
+  await inv('setLinkWifi', true);
+  await new Promise((res) => setTimeout(res, 300));
+  const l3 = (await inv('state')).data.link;
+  return { ai: r, link: { code: l1.code, on: l1.state, ssid: l1.ssid, off: l2.state, again: l3.state, available: l1.available } };
 })()`;
 const master = run('master-server', {
   RAVEN_BIND: '127.0.0.1',
@@ -172,6 +181,7 @@ const master = run('master-server', {
 const masterReady = await waitFile(path.join(out, 'master.png'), 60_000);
 const mres = fs.existsSync(path.join(out, 'master.png.json')) ? JSON.parse(fs.readFileSync(path.join(out, 'master.png.json'), 'utf8')) : null;
 check('MasterServer starts off-screen and its dashboard adds an AI provider (address + key validated)', masterReady && mres?.ai?.ok, JSON.stringify(mres?.ai ?? (fs.existsSync(path.join(out, 'master.png.error.txt')) ? fs.readFileSync(path.join(out, 'master.png.error.txt'), 'utf8').slice(0, 300) : 'no result')));
+check('master has a Raven Wi-Fi link code and keeps its own network on (switch off and on works)', /^[A-Z2-9]{5}-[A-Z2-9]{5}$/.test(mres?.link?.code ?? '') && mres.link.on === 'on' && /^Raven-[A-Z2-9]{4}$/.test(mres.link.ssid ?? '') && mres.link.off === 'off' && mres.link.again === 'on', JSON.stringify(mres?.link));
 
 // ---------------------------------------------------------------- browser
 const browserScript = `(async () => {
@@ -370,12 +380,29 @@ const browserScript = `(async () => {
   result.offlineConvs = (await inv('conversations')).data.length;
   result.offlineRef = (await inv('reference', 'linked list in C')).data[0]?.id;
   result.tabsKept = win.tabs.length;
+  // No way to the master: a wrong link code is refused; the right one is saved and Raven tries to join Raven Wi-Fi.
+  const badLink = await inv('linkUse', 'nope');
+  result.linkBad = { ok: badLink.ok, error: badLink.error };
+  await inv('linkUse', 'k7qm2 xw4ph');
+  await until(() => app.conn.link.set && !['idle', 'joining'].includes(app.conn.link.state), 30000, 'link join');
+  result.link = app.conn.link;
   // Phase 3: master comes back; the browser must reconnect by itself.
   await until(() => app.conn.state === 'gateway_online', 90000, 'reconnect');
   result.reconnected = true;
   await inv('reload');
   await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && /Example Domain/.test(t.title) && !t.error; }, 30000, 'page after reconnect');
   result.afterReconnect = win.tabs.find(t => t.id === win.activeId).title;
+  // Raven Wi-Fi screen on the user PC (code saved during the outage above).
+  await inv('newTab', 'raven://connect');
+  await new Promise(r => setTimeout(r, 500));
+  const card = () => document.querySelector('.conn-card')?.innerText || '';
+  result.linkUiSet = /Raven Wi-Fi/.test(card()) && /Change code/.test(card());
+  await inv('linkForget');
+  await new Promise(r => setTimeout(r, 400));
+  result.linkForgot = !app.conn.link.set && !!document.querySelector('input[placeholder^="Link code"]');
+  await inv('linkUse', 'K7QM2-XW4PH');
+  await new Promise(r => setTimeout(r, 400));
+  result.linkWhileOnline = { set: app.conn.link.set, state: app.conn.link.state, conn: app.conn.state };
   result.done = true;
   return result;
 })()`;
@@ -397,7 +424,11 @@ const stopStart = (async () => {
     await sleep(300);
   }
   await sleep(1500);
-  masterProc.kill();
+  // Stop the whole process tree and wait until it is really gone (the next master needs its single-instance lock).
+  const gone = new Promise((r) => masterProc.once('exit', r));
+  if (process.platform === 'win32') spawn('taskkill', ['/PID', String(masterProc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  else masterProc.kill();
+  await Promise.race([gone, sleep(15_000)]);
   await sleep(10_000);
   masterProc = run('master-server', { RAVEN_BIND: '127.0.0.1', RAVEN_USER_DATA: path.join(out, 'master-data') }, 'master2');
   restarted = true;
@@ -446,6 +477,14 @@ if (bres) {
   const idFile = JSON.parse(fs.readFileSync(path.join(out, 'browser-data', 'identity.json'), 'utf8'));
   check('browser remembers every address of the master for other networks (pinned)', Array.isArray(idFile.server?.routes) && idFile.server.routes.length > 0 && !!idFile.server.pin, JSON.stringify(idFile.server?.routes?.length));
   check('master restarted: browser reconnects by itself and browsing works again', bres.reconnected && /Example Domain/.test(bres.afterReconnect ?? ''), bres.afterReconnect);
+}
+if (bres) {
+  check('a wrong link code is refused with a clear message', bres.linkBad && !bres.linkBad.ok && /link code/i.test(bres.linkBad.error ?? ''), bres.linkBad?.error);
+  check('master unreachable + link code typed: Raven tries Raven Wi-Fi and says why it could not join', bres.link?.set && bres.link.state === 'not-found' && /not in range/.test(bres.link.error ?? ''), JSON.stringify(bres.link));
+  check('the connection page shows Raven Wi-Fi with Change code, and removing the code brings back the code box', bres.linkUiSet && bres.linkForgot, JSON.stringify({ set: bres.linkUiSet, forgot: bres.linkForgot }));
+  check('typing the code while already online saves it without switching Wi-Fi', bres.linkWhileOnline?.set && bres.linkWhileOnline.state === 'idle' && bres.linkWhileOnline.conn === 'gateway_online', JSON.stringify(bres.linkWhileOnline));
+  const idf = fs.readFileSync(path.join(out, 'browser-data', 'identity.json'), 'utf8');
+  check('the link code is stored encrypted on the user PC', /"linkEnc"/.test(idf) && !/K7QM2/.test(idf));
 }
 check('master was restarted during the run', restarted);
 

@@ -68,11 +68,60 @@ public class MasterService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         goForeground();
+        watchPairingAlerts();
         if (!nodeStarted) {
             nodeStarted = true;
             new Thread(null, this::runNode, "raven-node", 16 * 1024 * 1024).start();
         }
         return START_STICKY;
+    }
+
+    private static final String ALERTS = "raven-requests";
+    private Thread alertWatch;
+
+    /** A device asks to connect: the master writes pairing-alert.json; show it at once as a heads-up notification. */
+    private void watchPairingAlerts() {
+        if (alertWatch != null) return;
+        alertWatch = new Thread(() -> {
+            File f = new File(dataDir(this), "pairing-alert.json");
+            long seen = f.lastModified();
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(1000);
+                    long m = f.lastModified();
+                    if (m == 0 || m == seen) continue;
+                    seen = m;
+                    byte[] raw = java.nio.file.Files.readAllBytes(f.toPath());
+                    org.json.JSONObject o = new org.json.JSONObject(new String(raw, java.nio.charset.StandardCharsets.UTF_8));
+                    showPairingAlert(o.optString("name", "A device"), o.optString("code", ""));
+                } catch (InterruptedException e) {
+                    return;
+                } catch (Exception e) {
+                    Log.w("RavenMaster", "pairing alert: " + e.getMessage());
+                }
+            }
+        }, "raven-alerts");
+        alertWatch.setDaemon(true);
+        alertWatch.start();
+    }
+
+    private void showPairingAlert(String name, String code) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(ALERTS) == null) {
+            NotificationChannel ch = new NotificationChannel(ALERTS, "Connection requests", NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("A device asks to use this master.");
+            nm.createNotificationChannel(ch);
+        }
+        PendingIntent open = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, ALERTS) : new Notification.Builder(this);
+        b.setContentTitle("A device wants to connect")
+                .setContentText("\"" + name + "\" is waiting for approval. Code " + code + ".")
+                .setSmallIcon(R.drawable.ic_raven)
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_MESSAGE);
+        if (Build.VERSION.SDK_INT < 26) b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);
+        nm.notify(2, b.build());
     }
 
     private void goForeground() {
@@ -223,6 +272,7 @@ public class MasterService extends Service {
     @Override
     public void onDestroy() {
         if (netWatch != null) netWatch.interrupt();
+        if (alertWatch != null) alertWatch.interrupt();
         if (multicast != null && multicast.isHeld()) multicast.release();
         if (wake != null && wake.isHeld()) wake.release();
         super.onDestroy();

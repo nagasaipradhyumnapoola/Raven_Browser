@@ -69,6 +69,11 @@ export function Fav({ url, src, size = 16 }: { url: string; src?: string | null;
   );
 }
 
+/** Text that asks for something to be done on a website (the router decides how), not only answered. */
+export function looksLikeErrand(text: string): boolean {
+  return /\b(book|buy|order|purchase|reserve|send|e-?mail|post|tweet|sign ?up|log ?in|subscribe|unsubscribe|pay|download|fill|apply|schedule|cancel|open|go to|visit|play|watch|find me|search for|look up|latest|news|weather|price|today|tomorrow|near me)\b/i.test(text);
+}
+
 /** What typed text is: a web address, a question for the assistant, or a web search. */
 export function classifyInput(text: string): 'url' | 'ai' | 'search' {
   const t = text.trim();

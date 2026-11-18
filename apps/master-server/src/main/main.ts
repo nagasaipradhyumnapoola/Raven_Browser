@@ -10,6 +10,7 @@ import { MasterCore, httpSearch, type SecretStore } from '../core';
 import { FreeLlmSupervisor } from './freellm';
 import { AgentManager } from './agent';
 import { MasterSearch } from './search';
+import { FakeHotspot, Hotspot } from './hotspot';
 import type { InvokeResult } from '../types';
 
 const VERSION = process.env.RAVEN_VERSION ?? '0.0.0';
@@ -279,9 +280,12 @@ async function main(): Promise<void> {
         denied: (d, needsInternet) => c.agentDenied(d, needsInternet),
       });
       const browserSearch = new MasterSearch((ses) => agents.guardSession(ses));
+      // Tests of unpackaged builds use a stand-in, so they never change this computer's real Wi-Fi.
+      const hotspot = process.env.RAVEN_FAKE_HOTSPOT === '1' && !app.isPackaged ? new FakeHotspot(() => c.changed()) : new Hotspot(() => c.changed());
       return {
         supervisor,
         agents,
+        hotspot,
         search: {
           // The hidden browser first; plain HTTP if every engine challenged it.
           search: async (d, q, engine, page) => {
@@ -318,6 +322,8 @@ async function main(): Promise<void> {
       const n = new Notification({ title: 'A device wants to connect', body: `"${d.name}" is waiting for approval. Code ${d.pairingCode}.`, icon: iconPath() });
       n.on('click', () => createWindow(true));
       n.show();
+      // An open dashboard flashes in the taskbar so the request is not missed.
+      if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true);
     }
   });
 

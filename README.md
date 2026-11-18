@@ -58,6 +58,8 @@ Closing the window keeps the server running in the tray / menu bar. Use **Quit**
 2. On the same network, the new tab page lists the master it found: click **Connect**. On another network, type the address from the master's dashboard (*Overview → How other PCs connect → show address*).
 3. A 6-digit code appears. On the master, open *Devices*, check the code matches, and click **Approve**.
 
+**No Wi-Fi network and no internet on that computer?** Use **Raven Wi-Fi**. A Windows master runs its own Wi-Fi network (Windows Mobile Hotspot, started by Raven) and shows a **link code** on its *Overview* page. Type that code once in Raven Browser (new tab or *Master server* page). The browser works out the network's name and password from the code, joins it by itself, turns Wi-Fi on if it was off, and connects to the master. If the Wi-Fi adapter is disabled in Windows, one **Turn on Wi-Fi** click asks Windows for permission and enables it.
+
 That computer now browses and uses AI through the master. You approve it once; after that it reconnects by itself whenever both are running — after restarts, sleep, or moving to another network.
 
 ## Everything goes to the AI first

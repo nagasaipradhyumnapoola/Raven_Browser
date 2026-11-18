@@ -119,6 +119,8 @@ interface IdentityFile {
   privateKeyEnc: string;
   createdAt: number;
   server: PairingRecord | null;
+  /** Raven Wi-Fi link code, encrypted like the private key */
+  linkEnc?: string;
 }
 
 /**
@@ -143,6 +145,13 @@ export class IdentityStore {
     if (raw && raw.v === 1 && typeof raw.privateKeyEnc === 'string') {
       try {
         const pk = safeStorage.decryptString(Buffer.from(raw.privateKeyEnc, 'base64'));
+        if (typeof raw.linkEnc === 'string') {
+          try {
+            this.linkCode = safeStorage.decryptString(Buffer.from(raw.linkEnc, 'base64'));
+          } catch {
+            this.linkCode = null;
+          }
+        }
         if (deviceIdFromPublicKey(raw.publicKey) === raw.deviceId) {
           this.deviceId = raw.deviceId;
           this.publicKey = raw.publicKey;
@@ -179,8 +188,17 @@ export class IdentityStore {
       privateKeyEnc: safeStorage.encryptString(this.privateKey).toString('base64'),
       createdAt: Date.now(),
       server: this.server,
+      ...(this.linkCode ? { linkEnc: safeStorage.encryptString(this.linkCode).toString('base64') } : {}),
     };
     atomicWriteSync(this.file, JSON.stringify(data, null, 2));
+  }
+
+  /** Raven Wi-Fi link code typed once by the person (null = not set). */
+  linkCode: string | null = null;
+
+  setLinkCode(code: string | null): void {
+    this.linkCode = code;
+    this.save();
   }
 
   setServer(rec: PairingRecord | null): void {

@@ -58,6 +58,8 @@ export interface MasterSnapshot {
   remote: { state: 'off' | 'searching' | 'mapped' | 'unsupported' | 'error'; externalIp: string | null; port: number | null; error: string | null };
   /** what this master can do: hidden-browser tasks (desktop), bundled FreeLLMAPI, a desktop window */
   host: { agents: boolean; builtinAi: boolean; desktop: boolean };
+  /** Raven Wi-Fi: link code and hotspot state */
+  link: { code: string; wifi: boolean; available: boolean; state: string; ssid: string | null; clients: number; error: string | null };
   dataDir: string;
   history: { up: number[]; down: number[] };
   events: LogEvent[];

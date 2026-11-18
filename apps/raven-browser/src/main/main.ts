@@ -544,6 +544,9 @@ async function contextFor(w: Win, kind: 'page' | 'selection' | 'tabs', tabIds?: 
 function buildHandlers(): Record<string, Handler> {
   return {
     init: (w) => ({ win: w.state(), app: appState() }),
+    linkUse: async (_w, code) => (await conn.useLinkCode(str(code, 40)), true),
+    linkForget: () => (conn.forgetLinkCode(), true),
+    linkEnableWifi: async () => (await conn.enableWifiAdapter(), true),
     // passwords
     passwordAnswer: (w, id, choice) => {
       const o = pendingPasswords.get(num(id));
@@ -925,7 +928,7 @@ function buildHandlers(): Record<string, Handler> {
       return conn.useServer({ host: str(target.host, 255), port: num(target.port), name: typeof target.name === 'string' ? target.name : undefined, fp: typeof target.fp === 'string' ? target.fp : undefined });
     },
     connectAddress: (_w, text, ca) => conn.useAddress(str(text, 300), ca === true),
-    reconnect: () => conn.connectNow(),
+    reconnect: () => conn.retryNow(),
     forgetServer: () => conn.forgetServer(),
     rotateKey: async () => {
       const next = generateDeviceKeyPair();

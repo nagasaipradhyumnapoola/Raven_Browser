@@ -7,7 +7,7 @@ import { AnimatePresence, Btn, Chip, Dot, motion, useToasts } from '@raven/ui';
 import type { Bookmark } from '@raven/local-memory';
 import type { AppState, TabView, WindowState } from '../types';
 import type { RouteDecision } from '@raven/shared';
-import { C, Fav, classifyInput, hostOf, useC, type AiBridge, type Ctx } from './ctx';
+import { C, Fav, classifyInput, hostOf, looksLikeErrand, useC, type AiBridge, type Ctx } from './ctx';
 import { AiSidebar } from './sidebar';
 import { BookmarksPage, ConnectCard, ConnectPage, DownloadRow, DownloadsPage, HistoryPage, MemoryPage, NewTab, ReferencePage, SettingsPage, connTone } from './pages';
 import { RemotePage, SearchPage } from './remotepages';
@@ -676,6 +676,11 @@ function App() {
         if (kind === 'url' || !aiAnswersQuestions) {
           setRouting(false);
           return void run('navigate', t);
+        }
+        // A plain question: straight to the assistant, no extra round trip to the router.
+        if (kind === 'ai' && !looksLikeErrand(t)) {
+          setRouting(false);
+          return ask(t);
         }
         setRouting(true);
         void window.raven.invoke('route', t).then((r) => {

@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_SWITCHES, isPlainObject, type AgentTaskView, type DeviceRecord, type RouteDecision, type ServiceSwitches } from '@raven/shared';
-import { hashPin, verifyPin } from '@raven/security';
+import { LINK_HOST, generateLinkCode, hashPin, linkNetwork, verifyPin } from '@raven/security';
 import { AiService, type AiEndpoint } from './ai';
 import { ConfigStore, type MasterConfig, type SecretStore } from './config';
 import { DeviceRegistry } from './devices';
@@ -49,6 +49,13 @@ export interface AgentLike {
   shutdown(): void;
 }
 
+/** Raven Wi-Fi: the master's own network (Windows desktop master). */
+export interface HotspotLike {
+  status: { state: string; ssid: string | null; clients: number; error: string | null };
+  enable(ssid: string, passphrase: string): Promise<void>;
+  disable(): Promise<void>;
+}
+
 export interface SearchLike {
   search(d: DeviceRecord, q: string, engine: Engine, page: number): Promise<SearchResponse>;
   shutdown?(): void;
@@ -60,7 +67,7 @@ export interface MasterHost {
   dataDir: string;
   secrets: SecretStore;
   /** extras created once the core exists (they need its AI and gateway) */
-  attach?(core: MasterCore): { supervisor?: SupervisorLike; agents?: AgentLike; search?: SearchLike };
+  attach?(core: MasterCore): { supervisor?: SupervisorLike; agents?: AgentLike; search?: SearchLike; hotspot?: HotspotLike };
   clipboard?: { write(text: string): void; read(): string | Promise<string>; clear(): void };
   openPath?(p: string): void;
   setAutoStart?(on: boolean): void;
@@ -111,6 +118,7 @@ export class MasterCore extends EventEmitter {
   readonly portMapper: PortMapper;
   supervisor: SupervisorLike = NO_SUPERVISOR;
   agents: AgentLike | null = null;
+  hotspot: HotspotLike | null = null;
   search: SearchLike = { search: (_d, q, _e, page) => httpSearch(q, page) };
   readonly history = { up: Array<number>(60).fill(0), down: Array<number>(60).fill(0) };
   private handlers: Record<string, (...args: any[]) => unknown> = {};
@@ -147,12 +155,14 @@ export class MasterCore extends EventEmitter {
       version: this.host.version,
       rpcHandler: (d, m, p) => this.rpc(d, m, p),
       agentsFor: (d) => !!this.agents && this.agentDenied(d, true) === null,
+      alwaysRoutes: () => (this.hotspot && this.config.value.link.wifi ? [`${LINK_HOST}:${this.config.value.port}`] : []),
       extraRoutes: () => (this.portMapper.status.state === 'mapped' && this.portMapper.status.externalIp ? [`${this.portMapper.status.externalIp}:${this.portMapper.status.port}`] : []),
     });
     const extras = this.host.attach?.(this) ?? {};
     if (extras.supervisor) this.supervisor = extras.supervisor;
     if (extras.agents) this.agents = extras.agents;
     if (extras.search) this.search = extras.search;
+    if (extras.hotspot) this.hotspot = extras.hotspot;
 
     this.supervisor.on('change', () => {
       void this.ai.refresh();
@@ -162,6 +172,7 @@ export class MasterCore extends EventEmitter {
     this.gateway.on('change', () => {
       this.syncAdvertiser();
       this.syncPortMapping();
+      this.syncLinkWifi();
       this.changed();
     });
     this.gateway.on('log', () => this.changed());
@@ -186,6 +197,17 @@ export class MasterCore extends EventEmitter {
     if (this.config.value.ai.builtin) void this.supervisor.start();
     this.syncAdvertiser();
     this.syncPortMapping();
+    this.syncLinkWifi();
+  }
+
+  /** Raven Wi-Fi on while the master is on and the switch is on. */
+  syncLinkWifi(): void {
+    if (!this.hotspot) return;
+    const c = this.config.value;
+    if (c.link.wifi && c.switches.master) {
+      const n = linkNetwork(c.link.code);
+      void this.hotspot.enable(n.ssid, n.passphrase);
+    } else void this.hotspot.disable();
   }
 
   async stop(): Promise<void> {
@@ -194,6 +216,7 @@ export class MasterCore extends EventEmitter {
       this.agents?.shutdown();
       this.search.shutdown?.();
       await this.portMapper.disable();
+      await this.hotspot?.disable();
       await this.gateway.stop();
       this.ai.stop();
       await this.supervisor.stop();
@@ -410,6 +433,12 @@ export class MasterCore extends EventEmitter {
         totalErrors: ai.totalErrors,
       },
       remote: { ...this.portMapper.status, externalIp: this.portMapper.status.externalIp ? 'set' : null },
+      link: {
+        code: c.link.code,
+        wifi: c.link.wifi,
+        available: !!this.hotspot && this.hotspot.status.state !== 'unsupported',
+        ...(this.hotspot ? { state: this.hotspot.status.state, ssid: this.hotspot.status.ssid, clients: this.hotspot.status.clients, error: this.hotspot.status.error } : { state: 'unsupported', ssid: null, clients: 0, error: null }),
+      },
       host: { agents: !!this.agents, builtinAi: sup.available, desktop: !!this.host.show },
       dataDir: this.host.dataDir,
       history: this.history,
@@ -480,6 +509,18 @@ export class MasterCore extends EventEmitter {
         return true;
       },
       disconnectAll: () => gateway.disconnectAll(),
+      setLinkWifi: (on: unknown) => {
+        config.update({ link: { ...config.value.link, wifi: on === true } });
+        this.syncLinkWifi();
+        gateway.log('info', `Raven Wi-Fi turned ${on === true ? 'on' : 'off'}.`);
+        return true;
+      },
+      newLinkCode: () => {
+        config.update({ link: { ...config.value.link, code: generateLinkCode() } });
+        this.syncLinkWifi();
+        gateway.log('security', 'A new Raven Wi-Fi link code was made; computers using the old one must type the new one.');
+        return config.value.link.code;
+      },
 
       // --- devices ---
       approveDevice: (id: unknown) => gateway.approveDevice(str(id, 60)),

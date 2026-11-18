@@ -29,6 +29,7 @@ The phone master does everything the desktop master does except **tasks** and **
 
 Any network path to the master works:
 
+- **Raven Wi-Fi** (Windows master): the master starts its own Wi-Fi network and shows a link code on *Overview*. On the other computer, type the code once in Raven Browser; it joins that network by itself, every time the master is otherwise unreachable. Nothing else is needed on that computer: no router, no internet, no Wi-Fi password.
 - **The master's hotspot** (phone or laptop): connect the other computer to that Wi-Fi.
 - **The same Wi-Fi router**, or a **network cable**.
 - **Another network entirely**: turn on *Server control → Remote access*. The master asks your router to forward its port. Paired computers learn every address the master can be reached at and switch to another one when they change networks. If your router or internet provider does not allow that, use a VPN or tunnel (see [NETWORKING-AND-SECURITY.md](NETWORKING-AND-SECURITY.md)).

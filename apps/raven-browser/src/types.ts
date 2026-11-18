@@ -66,6 +66,8 @@ export interface ConnView {
   route: 'gateway' | 'direct' | 'none';
   directAvailable: boolean;
   discovered: ServerSeen[];
+  /** Raven Wi-Fi: link code set, joining state, last problem */
+  link: { set: boolean; state: string; error: string | null };
   deviceId: string;
   deviceName: string;
   lastError: string | null;

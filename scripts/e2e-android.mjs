@@ -165,6 +165,13 @@ await sleep(500);
 const bres = fs.existsSync(path.join(out, 'browser.png.json')) ? JSON.parse(fs.readFileSync(path.join(out, 'browser.png.json'), 'utf8')) : null;
 const berr = fs.existsSync(path.join(out, 'browser.png.error.txt')) ? fs.readFileSync(path.join(out, 'browser.png.error.txt'), 'utf8').slice(0, 300) : '';
 check('Raven Browser on this PC pairs with the master on the phone and goes online', bres?.online, berr || bres?.server);
+let alertNote = '';
+try {
+  alertNote = adb('shell', 'dumpsys', 'notification', '--noredact');
+} catch {
+  /* older Android */
+}
+check('the phone shows a notification the moment a device asks to connect', /A device wants to connect/.test(alertNote) && /raven-requests/.test(alertNote), /raven-requests/.test(alertNote) ? 'on the "Connection requests" channel' : 'not found');
 check('a real HTTPS site loads through the phone', bres?.page?.title === 'Example Domain' && !bres.page.error, JSON.stringify(bres?.page));
 check('an AI answer streams through the phone master', bres?.ai?.end === 'done' && /Android master/.test(bres.ai.answer ?? ''), JSON.stringify(bres?.ai));
 check('search runs on the phone and the results come back', bres?.search?.n > 0, JSON.stringify(bres?.search));

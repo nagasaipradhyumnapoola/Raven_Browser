@@ -81,6 +81,8 @@ export function ConnectCard({ full }: { full?: boolean }) {
         </div>
       )}
 
+      {(full || !c.endpoint || c.link.set || c.state === 'server_unreachable') && <LinkSection />}
+
       {(full || !c.endpoint) && (
         <div style={{ marginTop: 16 }}>
           <div className="label">Or enter the address</div>
@@ -116,6 +118,101 @@ export function ConnectCard({ full }: { full?: boolean }) {
       )}
       {c.lastError && !s && <div className="warn" style={{ marginTop: 10, fontSize: 12.5 }}>{c.lastError}</div>}
     </Card>
+  );
+}
+
+const LINK_TEXT: Record<string, string> = {
+  idle: 'Raven joins the master’s Wi-Fi by itself whenever the master cannot be reached.',
+  joining: 'Joining Raven Wi-Fi…',
+  joined: 'On Raven Wi-Fi.',
+  'wifi-off': 'Wi-Fi is switched off on this computer.',
+  'adapter-disabled': 'The Wi-Fi adapter is turned off in Windows. Turn it on to join Raven Wi-Fi.',
+  'no-adapter': 'This computer has no Wi-Fi adapter. Use a cable or a USB Wi-Fi adapter.',
+  'not-found': 'Raven Wi-Fi is not in range.',
+  error: 'Could not join Raven Wi-Fi.',
+};
+
+/** Raven Wi-Fi: type the master's link code once; the browser joins the master's own network by itself. */
+function LinkSection() {
+  const { app, run, toast } = useC();
+  const l = app.conn.link;
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const join = async () => {
+    if (!code.trim() || busy) return;
+    setBusy(true);
+    try {
+      if ((await run('linkUse', code.trim())) !== undefined) setCode('');
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!l.set)
+    return (
+      <div style={{ marginTop: 16 }}>
+        <div className="label">No Wi-Fi or internet here?</div>
+        <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+          Type the link code shown in Raven Master Server under Raven Wi-Fi. You only do this once.
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <input
+            className="input"
+            style={{ fontFamily: 'var(--mono)', letterSpacing: '0.06em' }}
+            placeholder="Link code, like K7QM2-XW4PH"
+            value={code}
+            maxLength={16}
+            spellCheck={false}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === 'Enter' && void join()}
+          />
+          <Btn variant="primary" disabled={!code.trim() || busy} onClick={() => void join()}>
+            {busy ? 'Joining…' : 'Join'}
+          </Btn>
+        </div>
+      </div>
+    );
+  const tone = l.state === 'joined' ? 'ok' : l.state === 'joining' || l.state === 'idle' ? 'warn' : 'bad';
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="label">Raven Wi-Fi</div>
+      <div className="row wrap" style={{ marginTop: 8, gap: 10 }}>
+        <Dot tone={tone} live={l.state === 'joining'} />
+        <span className="muted" style={{ fontSize: 13, flex: 1, minWidth: 200 }}>
+          {LINK_TEXT[l.state] ?? LINK_TEXT.error}
+          {l.error && l.state !== 'joined' && l.state !== 'adapter-disabled' ? ` ${l.error}` : ''}
+        </span>
+        {l.state === 'adapter-disabled' && (
+          <Btn
+            size="sm"
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await run('linkEnableWifi');
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Turn on Wi-Fi
+          </Btn>
+        )}
+        {l.state !== 'joining' && l.state !== 'joined' && l.state !== 'adapter-disabled' && (
+          <Btn size="sm" onClick={() => run('reconnect')}>
+            Try again
+          </Btn>
+        )}
+        <Btn size="sm" variant="ghost" onClick={async () => (await run('linkForget')) !== undefined && toast('Link code removed.', 'ok')}>
+          Change code
+        </Btn>
+      </div>
+      {l.state === 'adapter-disabled' && (
+        <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+          Windows asks for permission once.
+        </div>
+      )}
+    </div>
   );
 }
 

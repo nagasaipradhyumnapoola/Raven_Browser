@@ -48,6 +48,7 @@ function shot(app, name, setup, env = {}) {
       env: {
         ...process.env,
         RAVEN_HEADLESS: '1',
+        RAVEN_FAKE_HOTSPOT: '1',
         RAVEN_BIND: '127.0.0.1',
         RAVEN_NO_UPNP: '1',
         RAVEN_USER_DATA: path.join(root, 'build', 'dev-master'),

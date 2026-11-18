@@ -21,7 +21,7 @@ const check = (name, ok, extra = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const freePort = () => new Promise((res) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 const gwPort = await freePort();
-const run = (app, env) => spawn(electron, [path.join(root, 'build', app)], { env: { ...process.env, RAVEN_HEADLESS: '1', ...env }, stdio: 'ignore', windowsHide: true });
+const run = (app, env) => spawn(electron, [path.join(root, 'build', app)], { env: { ...process.env, RAVEN_HEADLESS: '1', RAVEN_FAKE_HOTSPOT: '1', ...env }, stdio: 'ignore', windowsHide: true });
 const waitFile = async (f, ms) => { const t = Date.now(); while (!fs.existsSync(f) && Date.now() - t < ms) await sleep(500); await sleep(300); return fs.existsSync(f); };
 
 // ---------------------------------------------------------------- master on the copied real profile

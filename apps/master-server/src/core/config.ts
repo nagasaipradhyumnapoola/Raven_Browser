@@ -1,6 +1,7 @@
 // Master-server configuration persisted as a plain JSON file (atomic writes).
 import path from 'node:path';
 import { DEFAULT_SWITCHES, PRODUCT, isPlainObject, type ServiceSwitches } from '@raven/shared';
+import { generateLinkCode, normalizeLinkCode } from '@raven/security';
 import { atomicWriteSync, readJsonSync } from '../../../../packages/local-memory/src/fsutil';
 
 export interface MasterConfig {
@@ -39,6 +40,8 @@ export interface MasterConfig {
     mode?: 'managed' | 'external';
     externalUrl?: string;
   };
+  /** Raven Wi-Fi: the master's own network for user PCs with no network of their own */
+  link: { code: string; wifi: boolean };
   autoStart: boolean;
   minimizeToTray: boolean;
   pinHash: string | null;
@@ -61,6 +64,7 @@ export function defaultConfig(): MasterConfig {
     maxClients: 32,
     models: { disabled: [], defaultModel: null, codingModel: null, fallbacks: [], perMinute: {} },
     ai: { builtin: false, managedPort: 47811, providers: [] },
+    link: { code: generateLinkCode(), wifi: true },
     autoStart: false,
     minimizeToTray: true,
     pinHash: null,
@@ -119,6 +123,10 @@ function mergeConfig(raw: unknown): MasterConfig {
       ...(ai.mode ? { mode: ai.mode } : {}),
       ...(typeof ai.externalUrl === 'string' ? { externalUrl: ai.externalUrl } : {}),
     },
+    link: {
+      code: isPlainObject(r.link) && typeof (r.link as any).code === 'string' && normalizeLinkCode((r.link as any).code) ? normalizeLinkCode((r.link as any).code)! : d.link.code,
+      wifi: isPlainObject(r.link) && typeof (r.link as any).wifi === 'boolean' ? (r.link as any).wifi : d.link.wifi,
+    },
     autoStart: bool(r.autoStart, false),
     minimizeToTray: bool(r.minimizeToTray, true),
     pinHash: typeof r.pinHash === 'string' ? r.pinHash : null,
@@ -133,7 +141,10 @@ export class ConfigStore {
 
   constructor(dataDir: string) {
     this.file = path.join(dataDir, 'config.json');
-    this.value = mergeConfig(readJsonSync<unknown>(this.file, null));
+    const raw = readJsonSync<unknown>(this.file, null);
+    this.value = mergeConfig(raw);
+    // The link code is made once and kept: user PCs remember it.
+    if (!isPlainObject(raw) || !isPlainObject((raw as any).link)) this.save();
     if (!this.value.restoreSwitches) {
       this.value.switches = { ...DEFAULT_SWITCHES };
     }

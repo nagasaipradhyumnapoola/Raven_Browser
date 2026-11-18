@@ -121,7 +121,15 @@ async function main(): Promise<void> {
   };
   core.on('state', () => broadcast(true));
   core.on('tick', () => broadcast());
-  core.on('pairing-request', (d: { name: string; pairingCode: string }) => console.log(`[pairing] "${d.name}" wants to connect, code ${d.pairingCode}. Approve it on the dashboard.`));
+  core.on('pairing-request', (d: { name: string; pairingCode: string }) => {
+    console.log(`[pairing] "${d.name}" wants to connect, code ${d.pairingCode}. Approve it on the dashboard.`);
+    // The Android app watches this file and shows a notification at once.
+    try {
+      fs.writeFileSync(path.join(dataDir, 'pairing-alert.json'), JSON.stringify({ name: String(d.name).slice(0, 60), code: d.pairingCode, at: Date.now() }));
+    } catch {
+      /* not fatal */
+    }
+  });
 
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url ?? '/', 'http://localhost');

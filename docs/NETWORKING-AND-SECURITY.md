@@ -31,6 +31,14 @@ Raven Browser (user computer)                          Master (Windows / Mac / A
 
 There is no shared password and no secret inside any app file.
 
+## Raven Wi-Fi (computers with no network of their own)
+
+- A Windows master runs Windows Mobile Hotspot through the built-in WinRT tethering API (no driver, no admin rights) and keeps it on while the master runs (checked every 45 s, restarted if Windows turns it off). The master is always `192.168.137.1` on that network, and that address is added to every paired browser's saved routes.
+- The network name and its WPA2 password are derived from the **link code** (10 characters from a 31-letter alphabet without look-alikes, about 8 x 10^14 possibilities). The password is 24 base32 characters of SHA-256 over the code; the broadcast name comes from a separate hash, so it reveals nothing about the code.
+- On the user computer the code is stored encrypted (like the device key). When the master cannot be reached, the browser checks whether Raven Wi-Fi is in range and only then joins it: it saves the network with auto-connect, turns the Wi-Fi radio on if needed (no admin), and points the connection at `192.168.137.1`. It never switches networks while the master is reachable. Enabling a disabled adapter needs one Windows permission prompt, only after the person presses *Turn on Wi-Fi*.
+- Joining the network does not bypass anything: new devices still need the owner's approval, and the connection is still TLS with the master's pinned certificate.
+- *New code* on the master changes the network name and password; computers using the old code must type the new one.
+
 ## Reaching the master from another network
 
 Off by default (*Server control → Remote access*). When on:

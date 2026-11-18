@@ -14,6 +14,8 @@ import { Bonjour, type Browser } from 'bonjour-service';
 import { ERR_TEXT, PRODUCT, RavenError, type ClientState, type ConnState, type ErrCode } from '@raven/shared';
 import { GatewayClient, LocalProxy, directConnect, StreamError, type Endpoint } from '@raven/network-protocol';
 import type { IdentityStore, PairingRecord, SettingsStore } from './store';
+import { LINK_HOST, linkNetwork, normalizeLinkCode } from '@raven/security';
+import { currentSsid, enableAdapterWithPermission, joinRavenWifi, type WifiLinkState } from './wifilink';
 import type { ConnView, ServerSeen } from '../types';
 
 const DENIAL_STOPS_RETRY = new Set<ErrCode>(['device_revoked', 'pairing_disabled']);
@@ -53,6 +55,9 @@ export class ConnectionManager extends EventEmitter {
   lastError: string | null = null;
   directAvailable = false;
   nextRetryAt: number | null = null;
+  linkState: WifiLinkState = 'idle';
+  linkError: string | null = null;
+  private linkTried = 0;
   /** pin seen during a pending pairing, saved once the owner approves */
   private pendingPin: string | null = null;
 
@@ -244,6 +249,87 @@ export class ConnectionManager extends EventEmitter {
     this.directTimer.unref?.();
   }
 
+  // ---------------------------------------------------------------- Raven Wi-Fi
+  /** The person typed the master's link code: remember it, join Raven Wi-Fi, connect to the master on it. */
+  async useLinkCode(text: string): Promise<void> {
+    const code = normalizeLinkCode(text);
+    if (!code) throw new Error('That link code does not look right. It has 10 letters and digits, like K7QM2-XW4PH.');
+    this.identity.setLinkCode(code);
+    this.linkTried = 0;
+    const rec = this.identity.server;
+    const linkAddr = `${LINK_HOST}:${PRODUCT.defaultGatewayPort}`;
+    if (!rec) {
+      this.identity.setServer({ host: LINK_HOST, port: PRODUCT.defaultGatewayPort, tls: 'pin', pin: null, serverName: 'Raven Master', paired: false, fpPrefix: '', routes: [linkAddr] });
+    } else if (!(rec.routes ?? []).includes(linkAddr)) {
+      this.identity.setServer({ ...rec, routes: [...(rec.routes ?? []), linkAddr] });
+    }
+    // Already reaching the master: keep the current network; Raven Wi-Fi is used when the master cannot be reached.
+    if (this.state === 'gateway_online' || this.state === 'gateway_degraded' || this.state === 'ai_unavailable' || this.state === 'awaiting_authorization') {
+      this.emit('change');
+      return;
+    }
+    await this.ensureLink(true);
+    this.retryDelay = 1000;
+    await this.connectNow();
+  }
+
+  /** "Try again" from the person: no waiting for the Raven Wi-Fi retry pause. */
+  retryNow(): Promise<void> {
+    if (this.state === 'gateway_online') return Promise.resolve();
+    this.linkTried = 0;
+    this.retryDelay = 1000;
+    return this.connectNow();
+  }
+
+  forgetLinkCode(): void {
+    this.identity.setLinkCode(null);
+    this.linkState = 'idle';
+    this.linkError = null;
+    this.emit('change');
+  }
+
+  /** Windows asks the person to allow turning on a disabled Wi-Fi adapter, then Raven joins. */
+  async enableWifiAdapter(): Promise<void> {
+    await enableAdapterWithPermission();
+    this.linkTried = 0;
+    await this.ensureLink(true);
+    await this.connectNow();
+  }
+
+  /** Join Raven Wi-Fi when a link code is set and this computer is not on it. True if just joined. */
+  private async ensureLink(force = false): Promise<boolean> {
+    const code = this.identity.linkCode;
+    if (!code) return false;
+    if (!force && Date.now() - this.linkTried < 20_000) return false;
+    this.linkTried = Date.now();
+    const { ssid, passphrase } = linkNetwork(code);
+    if ((await currentSsid()) === ssid) {
+      this.linkState = 'joined';
+      // Already on Raven Wi-Fi: the master is at its fixed address there.
+      const rec = this.identity.server;
+      if (rec && rec.host !== LINK_HOST && rec.tls === 'pin') {
+        const port = Number((rec.routes ?? []).find((r) => r.startsWith(`${LINK_HOST}:`))?.split(':')[1] ?? PRODUCT.defaultGatewayPort);
+        this.identity.setServer({ ...rec, host: LINK_HOST, port });
+        return true;
+      }
+      return false;
+    }
+    this.linkState = 'joining';
+    this.linkError = null;
+    this.emit('change');
+    const r = await joinRavenWifi(ssid, passphrase);
+    this.linkState = r.state;
+    this.linkError = r.error ?? null;
+    this.emit('change');
+    if (r.state !== 'joined') return false;
+    const rec = this.identity.server;
+    if (rec && rec.tls === 'pin') {
+      const port = Number((rec.routes ?? []).find((x) => x.startsWith(`${LINK_HOST}:`))?.split(':')[1] ?? PRODUCT.defaultGatewayPort);
+      this.identity.setServer({ ...rec, host: LINK_HOST, port });
+    }
+    return true;
+  }
+
   // ---------------------------------------------------------------- any network
   /** Save every address the master can be reached at, so a move to another network still finds it. */
   private learnRoutes(s: ClientState): void {
@@ -377,6 +463,12 @@ export class ConnectionManager extends EventEmitter {
       if (code !== 'server_unreachable') this.denied = code;
       if (code === 'server_unreachable') {
         this.rediscover();
+        // No network to the master: join Raven Wi-Fi (if a link code was given) and go straight to the master on it.
+        if (await this.ensureLink()) {
+          this.connecting = false;
+          this.retryDelay = 1000;
+          return void this.connectNow();
+        }
         if (await this.tryOtherRoutes()) {
           this.connecting = false;
           this.retryDelay = 1000;
@@ -468,6 +560,7 @@ export class ConnectionManager extends EventEmitter {
       deviceName: this.settings.value.deviceName,
       lastError: this.lastError,
       nextRetryAt: this.nextRetryAt,
+      link: { set: !!this.identity.linkCode, state: this.linkState, error: this.linkError },
     };
   }
 }

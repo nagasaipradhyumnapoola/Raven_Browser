@@ -65,6 +65,53 @@ function Hidden({ text, empty }: { text: string; empty: string }) {
 }
 
 // ------------------------------------------------------------ Overview
+/** Raven Wi-Fi: this master's own network, for computers that have no network (or no internet) of their own. */
+function LinkCard() {
+  const { s, run, toast, confirm } = useC();
+  const l = s.link;
+  const tone = l.state === 'on' ? 'ok' : l.state === 'starting' ? 'warn' : l.wifi && l.available ? 'bad' : undefined;
+  const text =
+    !l.available
+      ? l.error ?? 'This master cannot run its own Wi-Fi (Windows masters only). Turn on the device\u2019s own hotspot instead.'
+      : !l.wifi
+        ? 'Off. Computers without a network cannot reach this master.'
+        : l.state === 'on'
+          ? `On as \u201c${l.ssid}\u201d \u00b7 ${l.clients} device${l.clients === 1 ? '' : 's'} joined`
+          : l.state === 'starting'
+            ? 'Starting\u2026'
+            : l.error ?? 'Not running.';
+  return (
+    <Card style={{ marginTop: 14 }}>
+      <div className="row between wrap" style={{ gap: 14 }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="label">Raven Wi-Fi</div>
+          <div className="help" style={{ marginTop: 6, maxWidth: 560 }}>
+            A computer with no Wi-Fi network and no internet types this code once in Raven Browser. It then joins this master’s own network by itself, every time.
+          </div>
+        </div>
+        {l.available && <Toggle on={l.wifi} label="Raven Wi-Fi" onChange={(v) => run('setLinkWifi', v)} />}
+      </div>
+      <div className="row wrap" style={{ marginTop: 14, gap: 16, alignItems: 'center' }}>
+        <div className="link-code selectable">{l.code}</div>
+        <Btn
+          size="sm"
+          variant="ghost"
+          onClick={async () => {
+            if (!(await confirm('Make a new link code?', 'Computers that joined with the old code must type the new one.'))) return;
+            if (await run('newLinkCode')) toast('New link code made.', 'ok');
+          }}
+        >
+          New code
+        </Btn>
+      </div>
+      <div className="row" style={{ marginTop: 10, gap: 8 }}>
+        <Dot tone={tone as any} live={l.state === 'on'} />
+        <span className="help" style={{ margin: 0 }}>{text}</span>
+      </div>
+    </Card>
+  );
+}
+
 function Overview({ go }: { go: (p: Page) => void }) {
   const { s, run } = useC();
   const st = s.stats;
@@ -173,6 +220,8 @@ function Overview({ go }: { go: (p: Page) => void }) {
           </Card>
         </Rise>
       </div>
+
+      <LinkCard />
 
       <div className="grid g2" style={{ marginTop: 14 }}>
         <Card>
