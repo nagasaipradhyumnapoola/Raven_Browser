@@ -109,7 +109,8 @@ jobs:
           # Windows and Android files already on the release (built and tested on Windows).
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D existing -p '*.exe' -p '*.apk'
           cp existing/*.exe existing/*.apk bundle/Raven/
-          cp mac/*.dmg bundle/Raven/
+          # Artifacts keep their dist/ folder; collect the .dmg files wherever they landed.
+          find mac -name '*.dmg' -exec cp {} bundle/Raven/ \;
           (cd bundle/Raven && sha256sum *.exe *.apk *.dmg > SHA256SUMS.txt)
           cat > bundle/Raven/README.txt <<'EOF'
           Raven
@@ -125,5 +126,5 @@ jobs:
           SHA256SUMS.txt lets you check the files.
           EOF
           (cd bundle && zip -r -q ../Raven-all.zip Raven)
-          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber mac/*.dmg bundle/Raven/SHA256SUMS.txt Raven-all.zip
-          ls -la mac bundle/Raven Raven-all.zip
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber bundle/Raven/*.dmg bundle/Raven/SHA256SUMS.txt Raven-all.zip
+          ls -la bundle/Raven Raven-all.zip

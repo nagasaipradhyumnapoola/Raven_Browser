@@ -17,3 +17,4 @@ apps/master-android/build/
 /old-exe-backup/
 /SHA256SUMS.txt
 /README-FILES.txt
+/*.dmg
