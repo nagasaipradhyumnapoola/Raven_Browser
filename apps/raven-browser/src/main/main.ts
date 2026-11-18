@@ -2,7 +2,7 @@
 import { app, BrowserWindow, dialog, ipcMain, net as enet, Notification, powerMonitor, session as esession, shell, type Session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { RavenError, type ErrCode } from '@raven/shared';
+import { RavenError, isSignInUrl, signInHeaders, type ErrCode } from '@raven/shared';
 import { generateDeviceKeyPair, signTranscript } from '@raven/security';
 import { MemoryStore, searchReference, type ChatMessage, type MemKind } from '@raven/local-memory';
 import { isPlainObject } from '@raven/shared';
@@ -165,6 +165,10 @@ async function setupSession(ses: Session): Promise<void> {
     'sec-ch-ua-platform': process.platform === 'darwin' ? '"macOS"' : process.platform === 'linux' ? '"Linux"' : '"Windows"',
   };
   ses.webRequest.onBeforeSendHeaders({ urls: ['https://*/*'] }, (details, cb) => {
+    // Google sign-in: present as Firefox (Google blocks sign-in from "embedded" browsers).
+    if (isSignInUrl(details.url) || (details.webContents && !details.webContents.isDestroyed() && isSignInUrl(details.webContents.getURL()))) {
+      return cb({ requestHeaders: signInHeaders(details.requestHeaders) });
+    }
     const h = details.requestHeaders;
     for (const [k, v] of Object.entries(hints)) if (!Object.keys(h).some((x) => x.toLowerCase() === k)) h[k] = v;
     cb({ requestHeaders: h });
@@ -445,6 +449,17 @@ async function contextFor(w: Win, kind: 'page' | 'selection' | 'tabs', tabIds?: 
 function buildHandlers(): Record<string, Handler> {
   return {
     init: (w) => ({ win: w.state(), app: appState() }),
+    // Test builds only: where the active page really sits, and how it identifies itself.
+    ...(process.env.RAVEN_SHOT && !app.isPackaged
+      ? {
+          debugView: (w: Win) => {
+            const t = w.active;
+            const v = (t as any)?.view as { getBounds(): Electron.Rectangle } | undefined;
+            const [cw, ch] = w.window.getContentSize();
+            return { bounds: v?.getBounds() ?? null, content: { width: cw, height: ch }, ua: t?.wc?.getUserAgent() ?? null, url: t?.wc?.getURL() ?? null };
+          },
+        }
+      : {}),
     // assistant routing + master agents (everything goes over the encrypted link to the master)
     route: (_w, text) => masterRpc('route', { text: str(text, 2000) }, 20_000),
     agentStart: (_w, goal) => masterRpc('agentStart', { goal: str(goal, 1000) }),

@@ -36,10 +36,14 @@ export function SearchPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Only the newest request may change the page (a slow earlier search must not overwrite a newer one).
+  const seq = useRef(0);
   const load = async (page: number) => {
+    const my = ++seq.current;
     setBusy(true);
     setErr(null);
     const r = await window.raven.invoke('masterSearch', q, page);
+    if (my !== seq.current) return;
     setBusy(false);
     if (r.ok) setPages((p) => (page === 0 ? [r.data as Response] : [...p, r.data as Response]));
     else setErr(r.error ?? 'The search did not work.');

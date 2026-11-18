@@ -24,6 +24,9 @@ export interface Host {
   dir: string;
 }
 
+import { googleBlockedQuery, nextZoom } from './navhelpers';
+import { firefoxUserAgent, isSignInUrl } from '@raven/shared';
+
 const INTERNAL: Record<string, InternalPage> = {
   'raven://newtab': 'newtab',
   'raven://search': 'search',
@@ -134,6 +137,14 @@ export class Tab {
 
   private wire(wc: WebContents): void {
     wc.setWebRTCIPHandlingPolicy(this.win.host.webrtcPolicy());
+    // Google sign-in pages refuse "embedded" browsers; on them this tab presents itself as Firefox (see signin.ts).
+    const normalUA = wc.getUserAgent();
+    wc.on('did-start-navigation', (e: any, u?: string, inPlace?: boolean, main?: boolean) => {
+      const url = e?.url ?? u ?? '';
+      if ((e?.isMainFrame ?? main) === false || (e?.isSameDocument ?? inPlace) === true) return;
+      const want = isSignInUrl(url) ? firefoxUserAgent() : normalUA;
+      if (wc.getUserAgent() !== want) wc.setUserAgent(want);
+    });
     wc.setWindowOpenHandler(({ url, disposition, features }) => {
       if (!/^(https?|about|blob|data):/i.test(url) && url !== '') {
         if (/^(mailto|tel):/i.test(url)) void this.win.confirmExternal(url);
@@ -158,6 +169,13 @@ export class Tab {
     });
     wc.on('did-stop-loading', () => this.win.changed());
     wc.on('did-navigate', (_e, url) => {
+      // Google showed its robot check for a search: run the same search on DuckDuckGo instead of stopping there.
+      const q = googleBlockedQuery(url);
+      if (q) {
+        this.win.window.webContents.send('raven:toast', { text: 'Google asked for a robot check, so this search opened on DuckDuckGo.', tone: 'ok' });
+        void wc.loadURL(`https://duckduckgo.com/?q=${encodeURIComponent(q)}`).catch(() => {});
+        return;
+      }
       this.url = url;
       this.error = null;
       this.blocked = 0;
@@ -215,7 +233,7 @@ export class Tab {
       this.win.changed();
     });
     wc.on('zoom-changed', (_e, dir) => {
-      wc.setZoomLevel(Math.max(-5, Math.min(5, wc.getZoomLevel() + (dir === 'in' ? 0.5 : -0.5))));
+      wc.setZoomFactor(nextZoom(wc.getZoomFactor(), dir === 'in' ? 'in' : 'out'));
       this.win.changed();
     });
     wc.on('before-input-event', (e, input) => {
@@ -261,7 +279,7 @@ export class Tab {
     const view = this.ensureView();
     if (from) this.returnTo = { url: from, floor: view.webContents.navigationHistory.length() };
     this.url = raw;
-    void view.webContents.loadURL(raw).catch(() => {
+    void view.webContents.loadURL(raw, isSignInUrl(raw) ? { userAgent: firefoxUserAgent() } : undefined).catch(() => {
       /* did-fail-load reports it */
     });
     this.win.layout();
@@ -403,6 +421,16 @@ export class Win {
     ui.on('before-input-event', (e, input) => {
       if (this.handleShortcut(input, true)) e.preventDefault();
     });
+    // Raven's own controls never zoom (a zoomed interface would mis-size the page next to it).
+    // Ctrl + mouse wheel over the tab bar or toolbar zooms the page instead.
+    ui.on('did-finish-load', () => {
+      ui.setZoomFactor(1);
+      void ui.setVisualZoomLevelLimits(1, 1);
+    });
+    ui.on('zoom-changed', (_e, dir) => {
+      ui.setZoomFactor(1);
+      this.zoom(dir === 'in' ? 'in' : 'out');
+    });
     this.window.once('ready-to-show', () => {
       // Test/automation runs (RAVEN_HEADLESS=1) render far off-screen without taking focus.
       if (process.env.RAVEN_HEADLESS === '1') {
@@ -482,10 +510,16 @@ export class Win {
       if (!t.view) continue;
       const show = t.id === this.activeId && !t.internal && !t.error && !t.crashed && !this.overlay;
       if (show) {
+        const [cw, ch] = this.window.getContentSize();
         if (this.htmlFullscreen) {
-          const [w, h] = this.window.getContentSize();
-          t.view.setBounds({ x: 0, y: 0, width: w, height: h });
-        } else t.view.setBounds(this.rect);
+          t.view.setBounds({ x: 0, y: 0, width: cw, height: ch });
+        } else {
+          // The page area is measured in the interface's CSS pixels; convert to window units and keep it inside the window.
+          const z = this.window.webContents.getZoomFactor() || 1;
+          const x = Math.max(0, Math.round(this.rect.x * z));
+          const y = Math.max(0, Math.round(this.rect.y * z));
+          t.view.setBounds({ x, y, width: Math.max(0, Math.min(Math.round(this.rect.width * z), cw - x)), height: Math.max(0, Math.min(Math.round(this.rect.height * z), ch - y)) });
+        }
       }
       if (t.view.getVisible() !== show) t.view.setVisible(show);
     }
@@ -612,8 +646,7 @@ export class Win {
   zoom(dir: 'in' | 'out' | 'reset'): void {
     const wc = this.active?.wc;
     if (!wc || this.active?.internal) return;
-    if (dir === 'reset') wc.setZoomLevel(0);
-    else wc.setZoomLevel(Math.max(-5, Math.min(5, wc.getZoomLevel() + (dir === 'in' ? 0.5 : -0.5))));
+    wc.setZoomFactor(nextZoom(wc.getZoomFactor(), dir));
     this.changed();
   }
 

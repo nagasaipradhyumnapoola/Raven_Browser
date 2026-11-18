@@ -339,10 +339,18 @@ function Toolbar({ pop, setPop, focusSignal }: { pop: PopKind; setPop: (p: PopKi
         </button>
       )}
       <Omnibox tab={tab} focusSignal={focusSignal} />
-      {tab && tab.zoom !== 100 && (
-        <button className="chip zoom-tag" onClick={() => run('zoom', 'reset')} title="Reset zoom (Ctrl+0)">
-          {tab.zoom}%
-        </button>
+      {tab && !tab.internal && (
+        <div className="zoom-ctl" role="group" aria-label="Zoom">
+          <button className="icon-btn" title="Zoom out (Ctrl+−)" onClick={() => run('zoom', 'out')} disabled={tab.zoom <= 25}>
+            <I.IMinus />
+          </button>
+          <button className="zoom-val" title="Reset to 100% (Ctrl+0)" onClick={() => run('zoom', 'reset')}>
+            {tab.zoom}%
+          </button>
+          <button className="icon-btn" title="Zoom in (Ctrl++)" onClick={() => run('zoom', 'in')} disabled={tab.zoom >= 500}>
+            <I.IPlus />
+          </button>
+        </div>
       )}
       <button className="status-btn" onClick={() => setPop(pop === 'conn' ? null : 'conn')} title={c.detail}>
         <Dot tone={tone} />
@@ -544,6 +552,7 @@ function App() {
   const [focusSignal, setFocusSignal] = useState(0);
   const [aiAction, setAiAction] = useState<AiBridge['pendingAction']>(null);
   const [routing, setRouting] = useState(false);
+  const routeSeq = useRef(0);
   const [width, setWidth] = useState(420);
   const { push, view } = useToasts();
   const overlayCount = useRef(0);
@@ -629,9 +638,15 @@ function App() {
         if (!t) return;
         const kind = classifyInput(t);
         // Addresses open directly. Everything else goes to the AI first, which decides: answer, open, search or do it.
-        if (kind === 'url' || !aiAnswersQuestions) return void run('navigate', t);
+        // Typing again while the AI is still deciding replaces the earlier request (no double actions).
+        const my = ++routeSeq.current;
+        if (kind === 'url' || !aiAnswersQuestions) {
+          setRouting(false);
+          return void run('navigate', t);
+        }
         setRouting(true);
         void window.raven.invoke('route', t).then((r) => {
+          if (my !== routeSeq.current) return;
           setRouting(false);
           const d = r.ok ? (r.data as RouteDecision) : null;
           if (!d) return kind === 'ai' ? ask(t) : void run('navigate', t);

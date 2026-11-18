@@ -270,9 +270,14 @@ export class GatewayServer extends EventEmitter {
         this.emit('change');
       }
     };
-    void runProbe();
-    this.probeTimer = setInterval(() => void runProbe(), 30_000);
-    this.probeTimer.unref?.();
+    // Check every 30 s while online, every 5 s while offline (so devices recover right after the internet returns).
+    const loop = async () => {
+      await runProbe();
+      if (!this.tick) return; // stopped meanwhile
+      this.probeTimer = setTimeout(() => void loop(), this.masterOnline ? 30_000 : 5_000);
+      this.probeTimer.unref?.();
+    };
+    void loop();
     if (this.switches.master) await this.listen();
   }
 

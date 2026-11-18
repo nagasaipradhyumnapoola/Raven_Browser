@@ -65,7 +65,8 @@ async function pack(app, exe, appId, productName, extra = {}) {
         artifactName: `${exe}.exe`,
         requestedExecutionLevel: 'asInvoker',
       },
-      portable: { artifactName: `${exe}.exe`, unpackDirName: `${exe}-runtime` },
+      // No fixed unpack folder: every build unpacks into its own folder, so an older copy still running can never hide a new version.
+      portable: { artifactName: `${exe}.exe` },
       // Unsigned: on first open, right-click the app and choose Open (see docs/SETUP-AND-USE.md).
       // Ad-hoc signature ('-'): no Apple developer account needed, and Apple Silicon Macs will run it after "Open anyway".
       mac: { icon: macIcon, category: 'public.app-category.productivity', identity: '-', hardenedRuntime: false, gatekeeperAssess: false, artifactName: `${exe}-mac-${macArch}.\${ext}` },

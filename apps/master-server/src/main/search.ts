@@ -4,6 +4,7 @@
 // or internet. One hidden window per device (own cookies), closed after a few idle minutes.
 import { BrowserWindow, session } from 'electron';
 import type { DeviceRecord } from '@raven/shared';
+import { httpSearch } from '../core/httpsearch';
 
 export type Engine = 'google' | 'duckduckgo' | 'bing' | 'brave';
 export interface SearchResult {
@@ -124,25 +125,47 @@ export class MasterSearch {
     }
   }
 
+  /** Engines that showed a robot check recently are skipped for a while (no point waiting on them again). */
+  private blockedUntil = new Map<Engine, number>();
+
   private async run(s: Slot, q: string, preferred: Engine, page: number): Promise<SearchResponse> {
-    const order: Engine[] = [preferred, ...(['google', 'duckduckgo', 'bing', 'brave'] as Engine[]).filter((e) => e !== preferred)];
-    const skipped: Engine[] = [];
+    const now = Date.now();
+    const usable = (e: Engine) => (this.blockedUntil.get(e) ?? 0) < now;
+    const skipped: Engine[] = (['google', 'duckduckgo', 'bing', 'brave'] as Engine[]).filter((e) => !usable(e));
     const wc = s.win.webContents;
-    for (const engine of order) {
+    // 1. The engine the person chose, in the hidden browser (best results), unless it is blocking bots right now.
+    // 2. If it is blocked: the fast text-only engines (no page rendering, no robot checks).
+    // 3. Then the other engines in the hidden browser.
+    const tryBrowser = async (engine: Engine): Promise<SearchResponse | null> => {
       try {
-        await Promise.race([wc.loadURL(URLS[engine](q, page)), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15_000))]);
-        // Some engines fill results in after load.
+        await Promise.race([wc.loadURL(URLS[engine](q, page)), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), engine === 'google' ? 8_000 : 15_000))]);
         let got: { blocked: boolean; results: SearchResult[] } = { blocked: false, results: [] };
         for (let i = 0; i < 6; i++) {
           got = await wc.executeJavaScript(EXTRACT);
           if (got.blocked || got.results.length) break;
           await new Promise((r) => setTimeout(r, 500));
         }
+        if (got.blocked) this.blockedUntil.set(engine, Date.now() + 30 * 60_000);
         if (!got.blocked && got.results.length) return { query: q, engine, page, results: got.results, skipped };
       } catch {
-        /* try the next engine */
+        /* next */
       }
       skipped.push(engine);
+      return null;
+    };
+    if (usable(preferred)) {
+      const r = await tryBrowser(preferred);
+      if (r) return r;
+    }
+    try {
+      const fast = await httpSearch(q, page);
+      return { ...fast, skipped: [...skipped, ...fast.skipped] };
+    } catch {
+      /* the hidden browser is the last resort */
+    }
+    for (const engine of (['duckduckgo', 'bing', 'brave', 'google'] as Engine[]).filter((e) => e !== preferred && usable(e))) {
+      const r = await tryBrowser(engine);
+      if (r) return r;
     }
     throw Object.assign(new Error('No search engine answered from the master right now (all showed a robot check or failed). Try again in a minute.'), { code: 'providers_unavailable' });
   }

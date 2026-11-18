@@ -1459,3 +1459,34 @@
 .tab:not(.active):hover .fav img.own {
   opacity: 0.85;
 }
+
+/* Zoom − 100% + next to the address bar (web pages only). */
+.zoom-ctl {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  -webkit-app-region: no-drag;
+}
+.zoom-ctl .icon-btn {
+  width: 26px;
+  height: 28px;
+}
+.zoom-ctl .icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.zoom-ctl .zoom-val {
+  min-width: 44px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 500 12px/1 var(--sans);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.zoom-ctl .zoom-val:hover {
+  color: var(--text);
+}

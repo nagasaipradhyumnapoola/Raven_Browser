@@ -279,7 +279,7 @@ const browserScript = `(async () => {
   await inv('settings', { masterSearch: false });
   // Google search and Gmail through the gateway.
   await inv('navigate', 'binary search tree in C');
-  await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && /google\\./.test(t.url) && (t.title.toLowerCase().includes('binary') || t.error || /sorry|consent/.test(t.url)); }, 30000, 'google');
+  await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && (/google\\./.test(t.url) || /duckduckgo\\.com/.test(t.url)) && (t.title.toLowerCase().includes('binary') || t.error || /consent/.test(t.url)); }, 30000, 'google');
   let t2 = win.tabs.find(t => t.id === win.activeId);
   result.google = { title: t2.title, url: t2.url.slice(0, 120), error: t2.error, ua: navigator.userAgent };
   result.searchSaved = (await inv('searches', { limit: 5 })).data.some(s => s.q === 'binary search tree in C');
@@ -293,6 +293,35 @@ const browserScript = `(async () => {
   await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && (/accounts\\.google\\.com|mail\\.google\\.com|workspace\\.google\\.com/.test(t.url) || t.error); }, 30000, 'gmail');
   t2 = win.tabs.find(t => t.id === win.activeId);
   result.gmail = { title: t2.title, url: t2.url.slice(0, 80), error: t2.error };
+  // As a user: the page fits the window, the toolbar zoom buttons work, Google's robot check falls back, sign-in pages present as Firefox.
+  await inv('navigate', 'https://example.com/');
+  await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && t.title === 'Example Domain'; }, 30000, 'example for ux');
+  await new Promise(r => setTimeout(r, 600));
+  const dv = (await inv('debugView')).data;
+  const area = document.querySelector('.content').getBoundingClientRect();
+  result.frame = { bounds: dv.bounds, content: dv.content, area: { x: Math.round(area.left), y: Math.round(area.top), w: Math.round(area.width), h: Math.round(area.height) } };
+  const zin = document.querySelector('.zoom-ctl button[title^="Zoom in"]');
+  zin && zin.click();
+  await new Promise(r => setTimeout(r, 500));
+  result.zoomAfterIn = win.tabs.find(t => t.id === win.activeId).zoom;
+  const zout = document.querySelector('.zoom-ctl button[title^="Zoom out"]');
+  zout && zout.click(); zout && zout.click();
+  await new Promise(r => setTimeout(r, 500));
+  result.zoomAfterOut = win.tabs.find(t => t.id === win.activeId).zoom;
+  document.querySelector('.zoom-ctl .zoom-val').click();
+  await new Promise(r => setTimeout(r, 500));
+  result.zoomAfterReset = win.tabs.find(t => t.id === win.activeId).zoom;
+  await inv('navigate', 'https://www.google.com/sorry/index?continue=' + encodeURIComponent('https://www.google.com/search?q=raven+browser+test'));
+  await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && /duckduckgo\.com/.test(t.url); }, 30000, 'robot check fallback');
+  result.robotFallback = win.tabs.find(t => t.id === win.activeId).url;
+  await inv('navigate', 'https://accounts.google.com/ServiceLogin');
+  await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && /accounts\.google\./.test(t.url); }, 30000, 'google sign-in');
+  await new Promise(r => setTimeout(r, 1500));
+  const sv = (await inv('debugView')).data;
+  result.signIn = { ua: sv.ua, url: (sv.url || '').slice(0, 60), title: win.tabs.find(t => t.id === win.activeId).title };
+  await inv('navigate', 'https://example.com/');
+  await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && t.title === 'Example Domain'; }, 30000, 'back to normal');
+  result.uaAfterSignIn = (await inv('debugView')).data.ua;
   // A file download through the gateway, saved on this PC.
   await inv('settings', { askWhereToSave: false, downloadDir: ${JSON.stringify(path.join(out, 'downloads'))} });
   await inv('download', 'https://www.rfc-editor.org/rfc/rfc9110.txt');
@@ -367,9 +396,14 @@ if (bres) {
   check('a search typed on the user PC runs on the master and the results show in Raven', bres.serpItems > 0 && /^https?:/.test(bres.serpFirst ?? ''), `${bres.serpItems} results; ${bres.serpMeta || bres.serpErr}`);
   check('a page opened on the master is shown and driven from the user PC (remote tab)', /example\.com/.test(bres.remoteFrame ?? '') && /example\.org/.test(bres.remoteNav ?? ''), `${bres.remoteFrame} -> ${bres.remoteNav}`);
   check('web search results load through the gateway (DuckDuckGo) and searches are saved to memory', !bres.ddg?.error && /linked list/i.test(bres.ddg?.title ?? '') && bres.searchSaved, JSON.stringify(bres.ddg));
-  const googleCheck = /\/sorry\//.test(bres.google?.url ?? '');
-  console.log(`INFO  Google search page reached through the gateway: ${googleCheck ? 'Google showed its "unusual traffic" check (it does this for any Electron-based browser on this machine, even without Raven code; a person can pass it once)' : 'results shown'}`);
+  const fellBack = /duckduckgo\.com/.test(bres.google?.url ?? '');
+  console.log(`INFO  Google search through the gateway: ${fellBack ? 'Google showed its robot check, so Raven opened the same search on DuckDuckGo' : 'Google results shown'}`);
   check('Gmail website is reachable (sign-in page loads)', !bres.gmail?.error && /accounts\.google\.com|mail\.google\.com|workspace\.google\.com/.test(bres.gmail?.url ?? ''), JSON.stringify(bres.gmail));
+  const fr = bres.frame;
+  check('the page fits exactly inside the window (no cut-off right or bottom)', fr?.bounds && fr.bounds.x + fr.bounds.width <= fr.content.width && fr.bounds.y + fr.bounds.height <= fr.content.height && Math.abs(fr.bounds.width - fr.area.w) <= 2 && Math.abs(fr.bounds.height - fr.area.h) <= 2, JSON.stringify(fr));
+  check('toolbar zoom buttons: + gives 110%, two − give 90%, clicking the % resets to 100%', bres.zoomAfterIn === 110 && bres.zoomAfterOut === 90 && bres.zoomAfterReset === 100, `${bres.zoomAfterIn} / ${bres.zoomAfterOut} / ${bres.zoomAfterReset}`);
+  check("Google's robot check turns into the same search on DuckDuckGo", /duckduckgo\.com\/\?q=raven/.test(bres.robotFallback ?? ''), bres.robotFallback);
+  check('Google sign-in page opens and presents as Firefox (Google blocks embedded browsers); normal pages stay Chromium', /Firefox\//.test(bres.signIn?.ua ?? '') && !/Electron/.test(bres.signIn?.ua ?? '') && /accounts\.google\./.test(bres.signIn?.url ?? '') && /Chrome\//.test(bres.uaAfterSignIn ?? '') && !/Firefox/.test(bres.uaAfterSignIn ?? ''), JSON.stringify({ signIn: bres.signIn, after: (bres.uaAfterSignIn || '').slice(-40) }));
   const dlFile = path.join(out, 'downloads', 'rfc9110.txt');
   check('file download through the gateway lands on the client PC', bres.download?.state === 'completed' && fs.existsSync(dlFile) && fs.statSync(dlFile).size > 100_000, bres.download ? `${bres.download.state}, ${bres.download.received} bytes` : 'none');
   check('master stopped: browser notices and reports it', ['offline', 'server_unreachable', 'connecting'].includes(bres.offlineState), `${bres.offlineState} (${bres.offlineLabel})`);
