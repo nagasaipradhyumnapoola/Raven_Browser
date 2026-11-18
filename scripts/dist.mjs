@@ -1,6 +1,6 @@
 // Packages the two apps for the platform this runs on.
 //   Windows: node scripts/dist.mjs  ->  dist/MasterServer.exe, dist/RavenBrowser.exe (portable), dist/SHA256SUMS.txt
-//   macOS:   node scripts/dist.mjs  ->  dist/MasterServer-mac.dmg, dist/RavenBrowser-mac.dmg (+ .zip), dist/SHA256SUMS.txt
+//   macOS:   node scripts/dist.mjs  ->  dist/MasterServer-mac-<arm64|x64>.dmg, dist/RavenBrowser-mac-<arm64|x64>.dmg, dist/SHA256SUMS.txt
 import { build as ebuild, Platform, Arch } from 'electron-builder';
 import { execSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -18,6 +18,8 @@ execSync('node scripts/build.mjs', { cwd: root, stdio: 'inherit' });
 execSync('node scripts/notices.mjs', { cwd: root, stdio: 'inherit' });
 fs.mkdirSync(dist, { recursive: true });
 const mac = process.platform === 'darwin';
+// Apple Silicon or Intel: the build matches the Mac it runs on.
+const macArch = process.arch === 'arm64' ? 'arm64' : 'x64';
 
 // macOS wants a 512px+ icon; scale the logo once (sharp is already a dependency of the bundled FreeLLMAPI).
 let macIcon = path.join(root, 'assets', 'icon.png');
@@ -36,7 +38,7 @@ async function pack(app, exe, appId, productName, extra = {}) {
   const out = path.join(root, 'stage', app);
   fs.rmSync(out, { recursive: true, force: true });
   await ebuild({
-    targets: mac ? Platform.MAC.createTarget(['dmg', 'zip'], process.arch === 'arm64' ? Arch.arm64 : Arch.x64) : Platform.WINDOWS.createTarget(['portable'], Arch.x64),
+    targets: mac ? Platform.MAC.createTarget(['dmg'], macArch === 'arm64' ? Arch.arm64 : Arch.x64) : Platform.WINDOWS.createTarget(['portable'], Arch.x64),
     publish: 'never',
     config: {
       appId,
@@ -65,12 +67,13 @@ async function pack(app, exe, appId, productName, extra = {}) {
       },
       portable: { artifactName: `${exe}.exe`, unpackDirName: `${exe}-runtime` },
       // Unsigned: on first open, right-click the app and choose Open (see docs/SETUP-AND-USE.md).
-      mac: { icon: macIcon, category: 'public.app-category.productivity', identity: null, hardenedRuntime: false, gatekeeperAssess: false, artifactName: `${exe}-mac.\${ext}` },
-      dmg: { artifactName: `${exe}-mac.\${ext}` },
+      // Ad-hoc signature ('-'): no Apple developer account needed, and Apple Silicon Macs will run it after "Open anyway".
+      mac: { icon: macIcon, category: 'public.app-category.productivity', identity: '-', hardenedRuntime: false, gatekeeperAssess: false, artifactName: `${exe}-mac-${macArch}.\${ext}` },
+      dmg: { artifactName: `${exe}-mac-${macArch}.\${ext}` },
       ...extra,
     },
   });
-  const files = mac ? [`${exe}-mac.dmg`, `${exe}-mac.zip`] : [`${exe}.exe`];
+  const files = mac ? [`${exe}-mac-${macArch}.dmg`] : [`${exe}.exe`];
   for (const f of files) {
     const built = path.join(out, f);
     if (!fs.existsSync(built)) continue;
@@ -83,7 +86,7 @@ await pack('master-server', 'MasterServer', 'app.raven.masterserver', 'Raven Mas
 await pack('raven-browser', 'RavenBrowser', 'app.raven.browser', 'Raven Browser');
 
 const lines = [];
-for (const f of mac ? ['MasterServer-mac.dmg', 'RavenBrowser-mac.dmg', 'MasterServer-mac.zip', 'RavenBrowser-mac.zip'] : ['MasterServer.exe', 'RavenBrowser.exe']) {
+for (const f of mac ? [`MasterServer-mac-${macArch}.dmg`, `RavenBrowser-mac-${macArch}.dmg`] : ['MasterServer.exe', 'RavenBrowser.exe']) {
   if (!fs.existsSync(path.join(dist, f))) continue;
   const h = crypto.createHash('sha256').update(fs.readFileSync(path.join(dist, f))).digest('hex');
   lines.push(`${h}  ${f}`);

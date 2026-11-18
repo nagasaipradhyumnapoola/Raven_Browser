@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const electron = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electron = path.join(root, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'raven-fl-'));
 const port = 47899;
 const results = [];

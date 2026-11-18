@@ -1,5 +1,6 @@
-# Builds and tests both apps on Windows and macOS, then uploads the packages.
-# Windows: MasterServer.exe + RavenBrowser.exe (portable). macOS: .dmg + .zip for each app (unsigned).
+# Builds and tests Raven on real Macs (Apple Silicon and Intel) and Windows, and can attach the Mac apps
+# to a GitHub Release (and rebuild the one-click Raven-all.zip with Windows, Android and Mac inside).
+#   Actions -> build -> Run workflow (optionally enter a release tag such as v1.0.0)
 name: build
 
 on:
@@ -7,16 +8,27 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Release tag to attach the Mac apps to (empty = just build and test)
+        required: false
+        default: ''
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: macos-latest
+            label: mac-arm64
+          - os: macos-15-intel
+            label: mac-x64
+          - os: windows-latest
+            label: windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +38,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: FreeLLMAPI (pinned commit, embedded in the master)
+      - name: FreeLLMAPI (pinned commit, embedded in the desktop master)
         shell: bash
         run: |
           git clone https://github.com/tashfeenahmed/freellmapi vendor/freellmapi
@@ -35,7 +47,12 @@ jobs:
           npx --prefix vendor/freellmapi/client vite build vendor/freellmapi/client
 
       - name: Install
-        run: npm ci
+        shell: bash
+        run: |
+          npm ci
+          # Make sure the Electron and esbuild binaries for this machine are present.
+          node node_modules/electron/install.js
+          node node_modules/esbuild/install.js || true
 
       - name: Type-check
         run: npm run typecheck
@@ -43,16 +60,70 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Build
+        run: node scripts/build.mjs
+
+      - name: End to end (headless master + real browser)
+        continue-on-error: true
+        shell: bash
+        run: node scripts/e2e-headless.mjs 2>&1 | tee e2e-headless.txt
+
+      - name: End to end (desktop master + real browser)
+        continue-on-error: true
+        shell: bash
+        run: RAVEN_HEADLESS=1 node scripts/e2e.mjs 2>&1 | tee e2e-desktop.txt
+
       - name: Package
         run: node scripts/dist.mjs
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: raven-${{ runner.os }}
+          name: raven-${{ matrix.label }}
           path: |
             dist/*.exe
             dist/*.dmg
-            dist/*.zip
             dist/SHA256SUMS.txt
+            e2e-*.txt
           if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release != ''
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.release }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: raven-mac-*
+          path: mac
+          merge-multiple: true
+
+      - name: Attach the Mac apps and rebuild the one-click bundle
+        shell: bash
+        run: |
+          set -e
+          mkdir -p bundle/Raven
+          # Windows and Android files already on the release (built and tested on Windows).
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D existing -p '*.exe' -p '*.apk'
+          cp existing/*.exe existing/*.apk bundle/Raven/
+          cp mac/*.dmg bundle/Raven/
+          (cd bundle/Raven && sha256sum *.exe *.apk *.dmg > SHA256SUMS.txt)
+          cat > bundle/Raven/README.txt <<'EOF'
+          Raven
+
+          Windows:  MasterServer.exe (master), RavenBrowser.exe (browser). Portable.
+          Mac:      *-mac-arm64.dmg for Apple Silicon (M1/M2/M3/M4), *-mac-x64.dmg for Intel Macs.
+                    First open: right-click the app > Open, or System Settings > Privacy & Security > Open Anyway.
+          Android:  RavenMaster-arm64.apk (most phones) or RavenMaster.apk (any phone): the master on a phone.
+
+          1. Start a master, add an AI provider (name, API address, key).
+          2. Put the other computer on the master's Wi-Fi or hotspot, open Raven Browser,
+             click Connect and approve the 6-digit code on the master. No cables, no accounts.
+          SHA256SUMS.txt lets you check the files.
+          EOF
+          (cd bundle && zip -r -q ../Raven-all.zip Raven)
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber mac/*.dmg bundle/Raven/SHA256SUMS.txt Raven-all.zip
+          ls -la mac bundle/Raven Raven-all.zip

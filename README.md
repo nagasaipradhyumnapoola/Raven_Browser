@@ -2,7 +2,7 @@
 
 ## Download
 
-**[⬇ Download everything (one zip)](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/Raven-all.zip)** — Windows apps, Android apps, checksums and a short guide.
+**[⬇ Download everything (one zip)](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/Raven-all.zip)** — Windows, Mac and Android apps, checksums and a short guide.
 
 Or one file at a time:
 
@@ -10,11 +10,15 @@ Or one file at a time:
 |---|---|
 | [MasterServer.exe](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/MasterServer.exe) | Master on Windows |
 | [RavenBrowser.exe](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/RavenBrowser.exe) | Browser on Windows |
+| [MasterServer-mac-arm64.dmg](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/MasterServer-mac-arm64.dmg) | Master on Apple Silicon Macs (M1/M2/M3/M4) |
+| [RavenBrowser-mac-arm64.dmg](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/RavenBrowser-mac-arm64.dmg) | Browser on Apple Silicon Macs |
+| [MasterServer-mac-x64.dmg](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/MasterServer-mac-x64.dmg) | Master on Intel Macs |
+| [RavenBrowser-mac-x64.dmg](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/RavenBrowser-mac-x64.dmg) | Browser on Intel Macs |
 | [RavenMaster-arm64.apk](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/RavenMaster-arm64.apk) | Master on most Android phones (53 MB) |
 | [RavenMaster.apk](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/RavenMaster.apk) | Master on any Android phone |
 | [SHA256SUMS.txt](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases/latest/download/SHA256SUMS.txt) | Checksums to verify the files |
 
-Mac apps are built by the [GitHub workflow](.github/workflows/build.yml) (*Actions → build → Run workflow*); they were not built or tested on a Mac yet. All releases: [Releases page](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases).
+Mac apps are built and tested on GitHub's Macs by the [build workflow](.github/workflows/build.yml). They are not code-signed by Apple: the first time, right-click the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**). All releases: [Releases page](https://github.com/nagasaipradhyumnapoola/Raven_Browser/releases).
 
 ---
 

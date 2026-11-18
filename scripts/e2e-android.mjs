@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sdk = process.env.ANDROID_HOME || path.join(os.homedir(), 'AppData', 'Local', 'Android', 'Sdk');
 const adbPath = path.join(sdk, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb');
 const adb = (...a) => execFileSync(adbPath, a, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-const electron = path.join(root, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
+const electron = path.join(root, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron');
 const apk = path.join(root, 'build', 'android', 'RavenMaster-debug.apk');
 const out = path.join(root, 'build', 'e2e-android');
 fs.rmSync(out, { recursive: true, force: true });
