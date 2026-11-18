@@ -1,0 +1,19 @@
+node_modules/
+build/
+dist/
+stage/
+vendor/
+*.log
+apps/master-android/app/src/main/assets/
+apps/master-android/app/src/main/jniLibs/
+apps/master-android/local.properties
+apps/master-android/.gradle/
+apps/master-android/app/build/
+apps/master-android/app/.cxx/
+apps/master-android/build/
+# downloadable builds are published as GitHub Release assets, not in git
+/*.exe
+/*.apk
+/old-exe-backup/
+/SHA256SUMS.txt
+/README-FILES.txt

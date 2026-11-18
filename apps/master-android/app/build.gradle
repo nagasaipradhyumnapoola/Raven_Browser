@@ -1,0 +1,82 @@
+// Raven Master for Android: the headless master (Node.js, embedded with nodejs-mobile) plus a WebView dashboard.
+// scripts/android.mjs fills src/main/assets/nodejs-project and src/main/jniLibs before this runs.
+plugins {
+    id 'com.android.application'
+}
+
+def nodeInclude = project.findProperty('nodeInclude') ?: "${rootDir}/../../vendor/nodejs-mobile/package/android/libnode/include/node"
+def ravenVersion = project.findProperty('ravenVersion') ?: '1.0.0'
+def ravenCode = (project.findProperty('ravenCode') ?: '1') as int
+
+android {
+    namespace 'app.raven.master'
+    compileSdk 36
+    ndkVersion '27.1.12297006'
+
+    defaultConfig {
+        applicationId 'app.raven.master'
+        minSdk 26
+        targetSdk 35
+        versionCode ravenCode
+        versionName ravenVersion
+        externalNativeBuild {
+            cmake {
+                arguments "-DNODE_INCLUDE=${nodeInclude}", '-DANDROID_STL=c++_shared'
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            def ks = project.findProperty('ravenKeystore')
+            if (ks) {
+                storeFile file(ks)
+                storePassword project.findProperty('ravenKeystorePassword')
+                keyAlias 'raven'
+                keyPassword project.findProperty('ravenKeystorePassword')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig project.findProperty('ravenKeystore') ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    // One APK per phone type (smaller download) plus one that runs everywhere.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            universalApk true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            // libnode.so is large; keep it uncompressed and page-aligned.
+            useLegacyPackaging false
+        }
+    }
+
+    androidResources {
+        // Node's files are read from disk after the first start; keep them intact.
+        noCompress += ['cjs', 'js', 'css', 'html', 'woff2', 'png']
+    }
+}

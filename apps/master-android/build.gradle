@@ -1,0 +1,10 @@
+// The Android Gradle plugin is loaded by class path (works offline from the local Gradle cache).
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.0'
+    }
+}

@@ -1,0 +1,58 @@
+# Builds and tests both apps on Windows and macOS, then uploads the packages.
+# Windows: MasterServer.exe + RavenBrowser.exe (portable). macOS: .dmg + .zip for each app (unsigned).
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: FreeLLMAPI (pinned commit, embedded in the master)
+        shell: bash
+        run: |
+          git clone https://github.com/tashfeenahmed/freellmapi vendor/freellmapi
+          git -C vendor/freellmapi checkout fd327a57bc4157b22d483007b522c2152c54ae9a
+          npm ci --prefix vendor/freellmapi --ignore-scripts
+          npx --prefix vendor/freellmapi/client vite build vendor/freellmapi/client
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Package
+        run: node scripts/dist.mjs
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: raven-${{ runner.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
