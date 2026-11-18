@@ -1,0 +1,67 @@
+# Attach the Mac apps from an earlier "build" run to a release, and rebuild the one-click Raven-all.zip
+# (Windows + Mac + Android) on GitHub itself. Nothing is rebuilt: the exact files that passed the Mac tests are used.
+#   Actions -> publish-mac -> Run workflow (release tag + the build run's id)
+name: publish-mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Release tag (for example v1.0.0)
+        required: true
+      run_id:
+        description: Id of the "build" run whose Mac apps to publish
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.release }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: raven-mac-*
+          path: mac
+          merge-multiple: true
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Attach the Mac apps and rebuild the one-click bundle
+        shell: bash
+        run: |
+          set -e
+          mkdir -p bundle/Raven
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D existing -p '*.exe' -p '*.apk'
+          cp existing/*.exe existing/*.apk bundle/Raven/
+          find mac -name '*.dmg' -exec cp {} bundle/Raven/ \;
+          ls -la bundle/Raven
+          test "$(ls bundle/Raven/*.dmg | wc -l)" -eq 4
+          (cd bundle/Raven && sha256sum *.exe *.dmg *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          cat > bundle/Raven/README.txt <<'EOF'
+          Raven
+
+          Windows   MasterServer.exe        master: shares this PC's internet and AI, does tasks for your devices
+                    RavenBrowser.exe        browser: everything you type goes to the AI first. Portable, no account.
+          Mac       MasterServer-mac-arm64.dmg / RavenBrowser-mac-arm64.dmg   Apple Silicon (M1, M2, M3, M4)
+                    MasterServer-mac-x64.dmg   / RavenBrowser-mac-x64.dmg     Intel Macs
+                    First open: right-click the app > Open (or System Settings > Privacy & Security > Open Anyway).
+          Android   RavenMaster-arm64.apk   the master on most phones
+                    RavenMaster.apk         the master on any phone (all CPU types)
+
+          1. Start a master and add an AI provider (any name, the provider's API address, your key).
+          2. Put the other computer on the master's Wi-Fi or hotspot, open Raven Browser, click Connect,
+             and approve the 6-digit code on the master's Devices page. No cables, no accounts.
+
+          Nothing is code-signed: Windows SmartScreen may ask once (More info > Run anyway); Android asks to
+          allow installing the APK; Mac asks as described above.
+          SHA256SUMS.txt lets you check the files were not altered.
+          EOF
+          (cd bundle && zip -r -q ../Raven-all.zip Raven)
+          ls -la Raven-all.zip
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber bundle/Raven/*.dmg bundle/Raven/SHA256SUMS.txt Raven-all.zip
