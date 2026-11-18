@@ -1,5 +1,5 @@
 // Raven Browser main process.
-import { app, BrowserWindow, dialog, ipcMain, net as enet, Notification, powerMonitor, session as esession, shell, type Session } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net as enet, Notification, powerMonitor, session as esession, shell, type Session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { RavenError, isSignInUrl, signInHeaders, type ErrCode } from '@raven/shared';
@@ -12,6 +12,7 @@ import { ChatRunner, extractPage, extractSelection, isSensitiveUrl } from './ai'
 import { shouldBlock } from './adblock';
 import { DATA_FOLDER, IdentityStore, SettingsStore, exeDir, resolveDataRoot } from './store';
 import { Win, type Host } from './windows';
+import { PasswordStore, passwordOriginAllowed } from './passwords';
 import type { AppState, BrowserSettings, ChatEvent, InvokeResult, PageContext } from '../types';
 
 const VERSION = process.env.RAVEN_VERSION ?? '0.0.0';
@@ -28,6 +29,12 @@ app.setAppUserModelId('app.raven.browser');
 app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-component-update');
 app.commandLine.appendSwitch('disable-domain-reliability');
+// Off-screen test runs: Windows marks a window at -32000 as hidden and Chromium would stop handing it input.
+if (process.env.RAVEN_HEADLESS === '1') {
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+}
 // Present a standard Chrome user agent: Electron's default adds "Electron/x" and the app name,
 // which some sites (search engines, sign-in pages) treat as an automated client.
 app.userAgentFallback = app.userAgentFallback.replace(/\s(raven-browser|Raven ?Browser)\/\S+/gi, '').replace(/\sElectron\/\S+/g, '');
@@ -42,6 +49,7 @@ let identity: IdentityStore;
 let conn: ConnectionManager;
 let memory: MemoryStore;
 let chat: ChatRunner;
+let passwords: PasswordStore;
 let memoryWarning: string | null = null;
 let quitting = false;
 const windows = new Map<number, Win>();
@@ -155,6 +163,10 @@ async function setupSession(ses: Session): Promise<void> {
   // which decides: master gateway, direct, or refused.
   await ses.setProxy({ mode: 'fixed_servers', proxyRules: `127.0.0.1:${conn.proxy.port}`, proxyBypassRules: '<local>' });
   ses.setSpellCheckerLanguages(['en-US']);
+  // Login capture and fill (isolated from the page's own scripts; see preload-page.ts).
+  const pagePreload = path.join(__dirname, 'preload-page.cjs');
+  if (typeof (ses as any).registerPreloadScript === 'function') (ses as any).registerPreloadScript({ type: 'frame', id: 'raven-page', filePath: pagePreload });
+  else ses.setPreloads([pagePreload]);
   ses.setUserAgent(app.userAgentFallback, 'en-US,en;q=0.9');
   // Chromium stops sending User-Agent Client Hints once the user agent is overridden; real Chrome
   // always sends the low-entropy ones, and their absence makes some sites treat Raven as a bot.
@@ -371,6 +383,89 @@ function pushApp(): void {
   }, 50);
 }
 
+// ---------------------------------------------------------------- passwords
+interface PendingPassword {
+  id: number;
+  origin: string;
+  username: string;
+  password: string;
+}
+const pendingPasswords = new Map<number, PendingPassword>();
+let pwSeq = 1;
+/** Usernames typed on an earlier step of a multi-step sign-in, per tab and site (kept 10 minutes). */
+const lastUsernames = new Map<string, { value: string; at: number }>();
+
+/** The site a page message really comes from: decided here from the frame, never from what the page says. */
+function frameOrigin(e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): string | null {
+  const o = e.senderFrame?.origin;
+  return o && o !== 'null' && passwordOriginAllowed(o) ? o : null;
+}
+
+function setupPasswordIpc(): void {
+  ipcMain.on('raven-page:username', (e, value: unknown) => {
+    const origin = frameOrigin(e);
+    if (!origin || typeof value !== 'string' || !value.trim()) return;
+    lastUsernames.set(`${e.sender.id}|${origin}`, { value: value.trim().slice(0, 200), at: Date.now() });
+  });
+
+  ipcMain.on('raven-page:submitted', (e, p: unknown) => {
+    const origin = frameOrigin(e);
+    if (!origin || !isPlainObject(p) || typeof p.password !== 'string' || !p.password) return;
+    const w = [...windows.values()].find((x) => x.tabFor(e.sender));
+    const tab = w?.tabFor(e.sender);
+    if (!w || !tab || w.private || passwords.isNever(origin)) return;
+    let username = typeof p.username === 'string' ? p.username.trim().slice(0, 200) : '';
+    const earlier = lastUsernames.get(`${e.sender.id}|${origin}`);
+    if (!username && earlier && Date.now() - earlier.at < 10 * 60_000) username = earlier.value;
+    const password = p.password.slice(0, 1000);
+    const kind = passwords.check(origin, username, password);
+    if (kind === 'same') {
+      const hit = passwords.forOrigin(origin).find((l) => l.username === username);
+      if (hit) passwords.touch(hit.id);
+      return;
+    }
+    if (w.pwOffer) pendingPasswords.delete(w.pwOffer.id);
+    const id = pwSeq++;
+    pendingPasswords.set(id, { id, origin, username, password });
+    w.pwOffer = { id, tabId: tab.id, origin, username, update: kind === 'update' };
+    w.changed();
+    // An unanswered offer goes away after 2 minutes, password and all.
+    setTimeout(() => {
+      if (pendingPasswords.delete(id) && w.pwOffer?.id === id) {
+        w.pwOffer = null;
+        w.changed();
+      }
+    }, 120_000).unref?.();
+  });
+
+  ipcMain.handle('raven-page:fill', async (e, p: unknown) => {
+    const origin = frameOrigin(e);
+    if (!origin) return null;
+    const w = [...windows.values()].find((x) => x.tabFor(e.sender));
+    if (!w) return null;
+    const logins = passwords.forOrigin(origin);
+    if (!logins.length) return null;
+    let pick = logins[0];
+    if (logins.length > 1) {
+      // Several accounts on this site: let the person choose, right under the field.
+      const at = isPlainObject(p) ? p : {};
+      const view = (w.tabFor(e.sender) as any)?.view?.getBounds?.() ?? { x: 0, y: 0 };
+      pick = await new Promise((resolve) => {
+        let chosen: typeof logins[number] | null = null;
+        const menu = Menu.buildFromTemplate([
+          ...logins.map((l) => ({ label: l.username || '(no username)', click: () => (chosen = l) })),
+        ]);
+        menu.popup({ window: w.window, x: Math.round(view.x + Number(at.x ?? 0)), y: Math.round(view.y + Number(at.y ?? 0)), callback: () => resolve(chosen as any) });
+      });
+      if (!pick) return null;
+    }
+    const password = passwords.reveal(pick.id);
+    if (password === null) return null;
+    passwords.touch(pick.id);
+    return { username: pick.username, password };
+  });
+}
+
 // ---------------------------------------------------------------- IPC
 async function masterRpc(method: string, params: unknown, timeout = 15_000): Promise<unknown> {
   if (!conn.client.online) throw new Error('Not connected to the master server.');
@@ -449,6 +544,35 @@ async function contextFor(w: Win, kind: 'page' | 'selection' | 'tabs', tabIds?: 
 function buildHandlers(): Record<string, Handler> {
   return {
     init: (w) => ({ win: w.state(), app: appState() }),
+    // passwords
+    passwordAnswer: (w, id, choice) => {
+      const o = pendingPasswords.get(num(id));
+      if (!o || !w.pwOffer || w.pwOffer.id !== num(id)) return false;
+      pendingPasswords.delete(o.id);
+      w.pwOffer = null;
+      if (choice === 'save') passwords.save(o.origin, o.username, o.password);
+      else if (choice === 'never') passwords.setNever(o.origin, true);
+      w.changed();
+      return true;
+    },
+    passwordsList: () => ({ logins: passwords.list(), never: passwords.neverList() }),
+    passwordReveal: (_w, id) => {
+      const p = passwords.reveal(str(id, 40));
+      if (p === null) throw new Error('That password could not be read.');
+      return p;
+    },
+    passwordCopy: (_w, id) => {
+      const p = passwords.reveal(str(id, 40));
+      if (p === null) throw new Error('That password could not be read.');
+      clipboard.writeText(p);
+      setTimeout(() => {
+        void Promise.resolve(clipboard.readText()).then((t) => t === p && clipboard.clear());
+      }, 30_000);
+      return true;
+    },
+    passwordDelete: (_w, id) => passwords.remove(str(id, 40)),
+    passwordNever: (_w, origin, on) => (passwords.setNever(str(origin, 300), on === true), true),
+    passwordsClear: () => (passwords.clearAll(), true),
     // Test builds only: where the active page really sits, and how it identifies itself.
     ...(process.env.RAVEN_SHOT && !app.isPackaged
       ? {
@@ -457,6 +581,28 @@ function buildHandlers(): Record<string, Handler> {
             const v = (t as any)?.view as { getBounds(): Electron.Rectangle } | undefined;
             const [cw, ch] = w.window.getContentSize();
             return { bounds: v?.getBounds() ?? null, content: { width: cw, height: ch }, ua: t?.wc?.getUserAgent() ?? null, url: t?.wc?.getURL() ?? null };
+          },
+          /** Real (trusted) input into the active page, as a person would give it. */
+          debugPage: async (w: Win, op: unknown, arg: unknown) => {
+            const wc = w.active?.wc;
+            if (!wc) return null;
+            // Chrome DevTools Protocol input: real, trusted events, even in an off-screen unfocused test window.
+            const cdp = async (method: string, params: Record<string, unknown>) => {
+              if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+              return wc.debugger.sendCommand(method, params);
+            };
+            if (op === 'click') {
+              const r = await wc.executeJavaScript(`(() => { const el = document.querySelector(${JSON.stringify(String(arg))}); if (!el) return null; el.scrollIntoView({ block: 'center' }); const b = el.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
+              if (!r) return false;
+              await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y });
+              await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+              await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+              return true;
+            }
+            if (op === 'type') return (await cdp('Input.insertText', { text: String(arg) }), true);
+            if (op === 'value') return wc.executeJavaScript(`(document.querySelector(${JSON.stringify(String(arg))}) || {}).value ?? null`);
+            if (op === 'eval') return wc.executeJavaScript(String(arg));
+            return null;
           },
         }
       : {}),
@@ -831,6 +977,8 @@ async function main(): Promise<void> {
   await app.whenReady();
   settings = new SettingsStore(dataRoot);
   identity = new IdentityStore(dataRoot);
+  passwords = new PasswordStore(dataRoot);
+  setupPasswordIpc();
   identity.load();
   permissions = readJsonSync<typeof permissions>(permissionsFile(), {});
   if (!isPlainObject(permissions)) permissions = {};

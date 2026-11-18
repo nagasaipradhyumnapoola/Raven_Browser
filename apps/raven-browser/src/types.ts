@@ -2,7 +2,7 @@
 import type { ClientState, ConnState, ErrCode } from '@raven/shared';
 import type { ChatMessage, ConversationMeta, DownloadRec } from '@raven/local-memory';
 
-export type InternalPage = 'newtab' | 'search' | 'remote' | 'history' | 'bookmarks' | 'downloads' | 'settings' | 'memory' | 'reference' | 'connect';
+export type InternalPage = 'newtab' | 'search' | 'remote' | 'passwords' | 'history' | 'bookmarks' | 'downloads' | 'settings' | 'memory' | 'reference' | 'connect';
 
 export interface TabView {
   id: number;
@@ -29,6 +29,15 @@ export interface PermissionAsk {
   tabId: number;
   origin: string;
   permission: string;
+}
+
+export interface PasswordOffer {
+  id: number;
+  tabId: number;
+  origin: string;
+  username: string;
+  /** the site already has this username saved with another password */
+  update: boolean;
 }
 
 export interface FindState {
@@ -103,6 +112,8 @@ export interface WindowState {
   fullscreen: boolean;
   maximized: boolean;
   perms: PermissionAsk[];
+  /** "Save password for this site?" waiting for an answer (the password itself never leaves the main process) */
+  pwOffer: PasswordOffer | null;
   /** snapshot of the page shown behind overlays, data URL */
   backdrop: string | null;
   bookmarked: boolean;

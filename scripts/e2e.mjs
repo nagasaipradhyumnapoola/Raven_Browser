@@ -322,6 +322,35 @@ const browserScript = `(async () => {
   await inv('navigate', 'https://example.com/');
   await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && t.title === 'Example Domain'; }, 30000, 'back to normal');
   result.uaAfterSignIn = (await inv('debugView')).data.ua;
+  // Password manager, as a person uses it: sign in, Save, then the login is filled on the next visit.
+  const page = (op, arg) => inv('debugPage', op, arg).then((r) => r.data);
+  const waitTab = (re, what) => until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && re.test(t.url); }, 30000, what);
+  await inv('navigate', '${siteUrl}/login');
+  await waitTab(/login$/, 'login page');
+  await new Promise(r => setTimeout(r, 500));
+  // Typing: the off-screen test window never takes keyboard focus from the desktop, so text is entered directly.
+  await page('eval', "(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const [n, v] of [['username', 'alice'], ['password', 'hunter2-secret']]) { const el = document.querySelector('input[name=' + n + ']'); set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); } })()");
+  result.pwTyped = { u: await page('value', 'input[name=username]'), p: await page('value', 'input[name=password]'), active: await page('eval', 'document.activeElement && document.activeElement.name') };
+  await page('click', 'button[type=submit]');
+  await waitTab(/compose$/, 'signed in').catch((e) => { throw new Error(e.message + ' typed=' + JSON.stringify(result.pwTyped) + ' url=' + win.tabs.find(t => t.id === win.activeId).url); });
+  await until(() => !!win.pwOffer, 15000, 'save offer');
+  result.pwOffer = { username: win.pwOffer.username, origin: win.pwOffer.origin, update: win.pwOffer.update, bar: !!document.querySelector('.pwbar') };
+  [...document.querySelectorAll('.pwbar button')].find(b => b.textContent.trim() === 'Save').click();
+  await until(() => !win.pwOffer, 5000, 'offer answered');
+  result.pwSaved = (await inv('passwordsList')).data.logins.map(l => l.username + '@' + l.origin);
+  result.pwFileClear = null;
+  await inv('newTab', '${siteUrl}/login');
+  await waitTab(/login$/, 'login again');
+  await new Promise(r => setTimeout(r, 500));
+  // A script on the page faking a click must NOT get the password filled.
+  await page('eval', "document.querySelector('input[name=password]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
+  await new Promise(r => setTimeout(r, 800));
+  result.pwFakeClick = await page('value', 'input[name=password]');
+  // A real click does fill it.
+  await page('click', 'input[name=username]');
+  await new Promise(r => setTimeout(r, 1200));
+  result.pwFilled = { user: await page('value', 'input[name=username]'), pass: await page('value', 'input[name=password]') };
+  await inv('closeTab', win.activeId);
   // A file download through the gateway, saved on this PC.
   await inv('settings', { askWhereToSave: false, downloadDir: ${JSON.stringify(path.join(out, 'downloads'))} });
   await inv('download', 'https://www.rfc-editor.org/rfc/rfc9110.txt');
@@ -404,6 +433,10 @@ if (bres) {
   check('toolbar zoom buttons: + gives 110%, two − give 90%, clicking the % resets to 100%', bres.zoomAfterIn === 110 && bres.zoomAfterOut === 90 && bres.zoomAfterReset === 100, `${bres.zoomAfterIn} / ${bres.zoomAfterOut} / ${bres.zoomAfterReset}`);
   check("Google's robot check turns into the same search on DuckDuckGo", /duckduckgo\.com\/\?q=raven/.test(bres.robotFallback ?? ''), bres.robotFallback);
   check('Google sign-in page opens and presents as Firefox (Google blocks embedded browsers); normal pages stay Chromium', /Firefox\//.test(bres.signIn?.ua ?? '') && !/Electron/.test(bres.signIn?.ua ?? '') && /accounts\.google\./.test(bres.signIn?.url ?? '') && /Chrome\//.test(bres.uaAfterSignIn ?? '') && !/Firefox/.test(bres.uaAfterSignIn ?? ''), JSON.stringify({ signIn: bres.signIn, after: (bres.uaAfterSignIn || '').slice(-40) }));
+  check('signing in offers "Save password" for the right site and username', bres.pwOffer?.username === 'alice' && /^http:\/\/127\.0\.0\.1:\d+$/.test(bres.pwOffer?.origin ?? '') && bres.pwOffer.bar && bres.pwOffer.update === false, JSON.stringify(bres.pwOffer));
+  check('Save stores the login (encrypted on disk, never in clear text)', (bres.pwSaved ?? []).some((x) => x.startsWith('alice@')) && !fs.readFileSync(path.join(out, 'browser-data', 'passwords.json'), 'utf8').includes('hunter2-secret'), JSON.stringify(bres.pwSaved));
+  check('clicking into the sign-in box on the next visit fills username and password', bres.pwFilled?.user === 'alice' && bres.pwFilled?.pass === 'hunter2-secret', JSON.stringify(bres.pwFilled ? { user: bres.pwFilled.user, pass: bres.pwFilled.pass ? 'filled' : 'empty' } : null));
+  check("a page's own script faking a click gets nothing filled", bres.pwFakeClick === '', JSON.stringify(bres.pwFakeClick));
   const dlFile = path.join(out, 'downloads', 'rfc9110.txt');
   check('file download through the gateway lands on the client PC', bres.download?.state === 'completed' && fs.existsSync(dlFile) && fs.statSync(dlFile).size > 100_000, bres.download ? `${bres.download.state}, ${bres.download.received} bytes` : 'none');
   check('master stopped: browser notices and reports it', ['offline', 'server_unreachable', 'connecting'].includes(bres.offlineState), `${bres.offlineState} (${bres.offlineLabel})`);

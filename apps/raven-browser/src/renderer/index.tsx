@@ -11,6 +11,7 @@ import { C, Fav, classifyInput, hostOf, useC, type AiBridge, type Ctx } from './
 import { AiSidebar } from './sidebar';
 import { BookmarksPage, ConnectCard, ConnectPage, DownloadRow, DownloadsPage, HistoryPage, MemoryPage, NewTab, ReferencePage, SettingsPage, connTone } from './pages';
 import { RemotePage, SearchPage } from './remotepages';
+import { PasswordsPage } from './passwordspage';
 import * as I from './icons';
 import logoUrl from '../../../../assets/raven-logo.png';
 
@@ -445,6 +446,8 @@ function Content() {
   const { win, run, app } = useC();
   const ref = useRef<HTMLDivElement>(null);
   const tab = win.tabs.find((t) => t.id === win.activeId);
+  const perm = win.perms.find((p) => p.tabId === win.activeId);
+  const pwOffer = win.pwOffer && win.pwOffer.tabId === win.activeId ? win.pwOffer : null;
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -460,8 +463,7 @@ function Content() {
       ro.disconnect();
       window.removeEventListener('resize', send);
     };
-  }, [win.sidebar, app.settings.showBookmarksBar, win.fullscreen]);
-  const perm = win.perms.find((p) => p.tabId === win.activeId);
+  }, [win.sidebar, app.settings.showBookmarksBar, win.fullscreen, !!perm, !!pwOffer]);
   const [findText, setFindText] = useState('');
   const findRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -469,7 +471,48 @@ function Content() {
   }, [win.find.open]);
   useEffect(() => window.raven.on('raven:cmd', (cmd: string) => cmd === 'focus-find' && setTimeout(() => findRef.current?.select(), 40)), []);
   return (
-    <div className="content" ref={ref}>
+    <div className="content">
+      <div className="infobars">
+        {perm && (
+          <div className="permbar">
+            <div style={{ fontSize: 13.5 }}>
+              <b>{hostOf(perm.origin)}</b> wants to {PERM_TEXT[perm.permission] ?? perm.permission}
+            </div>
+            <PermButtons id={perm.id} />
+          </div>
+        )}
+        {pwOffer && <PasswordBar offer={pwOffer} />}
+        {win.find.open && (
+          <div className="findbar">
+            <input
+              ref={findRef}
+              value={findText}
+              placeholder="Find in page"
+              onChange={(e) => {
+                setFindText(e.target.value);
+                void run('find', e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void run('find', findText, !e.shiftKey, true);
+                if (e.key === 'Escape') void run('findClose');
+              }}
+            />
+            <span className="faint" style={{ fontSize: 12, minWidth: 40, textAlign: 'right' }}>
+              {findText ? `${win.find.active}/${win.find.matches}` : ''}
+            </span>
+            <button className="icon-btn" title="Previous" onClick={() => run('find', findText, false, true)}>
+              <I.IBack style={{ transform: 'rotate(90deg)' }} />
+            </button>
+            <button className="icon-btn" title="Next" onClick={() => run('find', findText, true, true)}>
+              <I.IBack style={{ transform: 'rotate(-90deg)' }} />
+            </button>
+            <button className="icon-btn" title="Close (Esc)" onClick={() => run('findClose')}>
+              <I.IClose />
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="page-slot" ref={ref}>
       {win.backdrop && <img className="backdrop-img" src={win.backdrop} alt="" />}
       {tab?.internal === 'newtab' && <NewTab />}
       {tab?.internal === 'search' && <SearchPage />}
@@ -481,44 +524,34 @@ function Content() {
       {tab?.internal === 'memory' && <MemoryPage />}
       {tab?.internal === 'reference' && <ReferencePage />}
       {tab?.internal === 'connect' && <ConnectPage />}
+      {tab?.internal === 'passwords' && <PasswordsPage />}
       {tab && !tab.internal && (tab.error || tab.crashed) && <ErrorPage tab={tab} />}
-      {perm && (
-        <div className="permbar">
-          <div style={{ fontSize: 13.5 }}>
-            <b>{hostOf(perm.origin)}</b> wants to {PERM_TEXT[perm.permission] ?? perm.permission}
-          </div>
-          <PermButtons id={perm.id} />
-        </div>
+      </div>
+    </div>
+  );
+}
+
+/** "Save password for this site?" — the password itself stays in Raven's main process. */
+function PasswordBar({ offer }: { offer: NonNullable<WindowState['pwOffer']> }) {
+  const { run } = useC();
+  return (
+    <div className="permbar pwbar">
+      <I.ILock size={16} />
+      <div style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
+        {offer.update ? 'Update the saved password' : 'Save password'} for <b>{hostOf(offer.origin)}</b>
+        {offer.username && <span className="muted"> · {offer.username}</span>}?
+      </div>
+      <Btn size="sm" variant="primary" onClick={() => run('passwordAnswer', offer.id, 'save')}>
+        {offer.update ? 'Update' : 'Save'}
+      </Btn>
+      {!offer.update && (
+        <Btn size="sm" onClick={() => run('passwordAnswer', offer.id, 'never')}>
+          Never for this site
+        </Btn>
       )}
-      {win.find.open && (
-        <div className="findbar">
-          <input
-            ref={findRef}
-            value={findText}
-            placeholder="Find in page"
-            onChange={(e) => {
-              setFindText(e.target.value);
-              void run('find', e.target.value);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void run('find', findText, !e.shiftKey, true);
-              if (e.key === 'Escape') void run('findClose');
-            }}
-          />
-          <span className="faint" style={{ fontSize: 12, minWidth: 40, textAlign: 'right' }}>
-            {findText ? `${win.find.active}/${win.find.matches}` : ''}
-          </span>
-          <button className="icon-btn" title="Previous" onClick={() => run('find', findText, false, true)}>
-            <I.IBack style={{ transform: 'rotate(90deg)' }} />
-          </button>
-          <button className="icon-btn" title="Next" onClick={() => run('find', findText, true, true)}>
-            <I.IBack style={{ transform: 'rotate(-90deg)' }} />
-          </button>
-          <button className="icon-btn" title="Close (Esc)" onClick={() => run('findClose')}>
-            <I.IClose />
-          </button>
-        </div>
-      )}
+      <Btn size="sm" variant="ghost" onClick={() => run('passwordAnswer', offer.id, 'dismiss')}>
+        Not now
+      </Btn>
     </div>
   );
 }
@@ -749,6 +782,7 @@ function App() {
           <MI icon={<I.IPrivate />} label="New private window" kb="Ctrl+Shift+N" onClick={() => (close(), void run('newWindow', true))} />
           <div className="sep" />
           <MI icon={<I.IHistory />} label="History" kb="Ctrl+H" onClick={() => (close(), void run('newTab', 'raven://history'))} />
+          <MI icon={<I.ILock />} label="Passwords" onClick={() => (close(), void run('newTab', 'raven://passwords'))} />
           <MI icon={<I.IBookmark />} label="Bookmarks" onClick={() => (close(), void run('newTab', 'raven://bookmarks'))} />
           <MI icon={<I.IDownload />} label="Downloads" kb="Ctrl+J" onClick={() => (close(), void run('newTab', 'raven://downloads'))} />
           <MI icon={<I.IMemory />} label="Memory and notes" onClick={() => (close(), void run('newTab', 'raven://memory'))} />

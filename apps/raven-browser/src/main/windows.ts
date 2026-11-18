@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { ERR_TEXT, type ErrCode } from '@raven/shared';
 import type { MemoryStore } from '@raven/local-memory';
-import type { FindState, InternalPage, PermissionAsk, TabView, WindowState } from '../types';
+import type { FindState, InternalPage, PasswordOffer, PermissionAsk, TabView, WindowState } from '../types';
 
 export interface Host {
   memory(): MemoryStore;
@@ -31,6 +31,7 @@ const INTERNAL: Record<string, InternalPage> = {
   'raven://newtab': 'newtab',
   'raven://search': 'search',
   'raven://remote': 'remote',
+  'raven://passwords': 'passwords',
   'raven://history': 'history',
   'raven://bookmarks': 'bookmarks',
   'raven://downloads': 'downloads',
@@ -43,6 +44,7 @@ const INTERNAL_TITLE: Record<InternalPage, string> = {
   newtab: 'New tab',
   search: 'Search',
   remote: 'On the master',
+  passwords: 'Passwords',
   history: 'History',
   bookmarks: 'Bookmarks',
   downloads: 'Downloads',
@@ -380,6 +382,7 @@ export class Win {
   sidebar = false;
   find: FindState = { open: false, text: '', active: 0, matches: 0 };
   perms: (PermissionAsk & { resolve: (ok: boolean, remember: boolean) => void })[] = [];
+  pwOffer: PasswordOffer | null = null;
   backdrop: string | null = null;
   private rect = { x: 0, y: 92, width: 800, height: 600 };
   private overlay = false;
@@ -812,6 +815,7 @@ export class Win {
       fullscreen: this.htmlFullscreen,
       maximized: this.window.isMaximized(),
       perms: this.perms.map(({ resolve: _r, ...p }) => p),
+      pwOffer: this.pwOffer,
       backdrop: this.backdrop,
       bookmarked: !!url && !this.private && this.host.memory().isBookmarked(url),
     };
