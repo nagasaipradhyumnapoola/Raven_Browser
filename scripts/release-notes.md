@@ -10,10 +10,12 @@
 | `RavenMaster.apk` | Master on any Android phone (all CPU types). |
 | `SHA256SUMS.txt` | Checksums. |
 
-**Start:** open the master, add an AI provider (name, API address, key). Connect the other computer to the master's Wi-Fi or hotspot, open Raven Browser, click Connect, approve the 6-digit code. No cables, no accounts.
+**Start:** open the master, add an AI provider (name, API address, key). Open Raven Browser on the other computer, click Connect, approve the 6-digit code on the master. No cables, no accounts.
+
+**No Wi-Fi or internet on the other computer?** A Windows master runs its own network, **Raven Wi-Fi**, and shows a link code on its Overview page. Type the code once in Raven Browser: it joins that network by itself (turning Wi-Fi on if needed) and connects to the master.
 
 Not code-signed: Windows SmartScreen → *More info → Run anyway*; Mac → right-click the app → *Open* (or System Settings → Privacy & Security → *Open Anyway*); Android asks to allow installing the APK.
 
-**Tested on Windows, an Apple Silicon Mac and an Intel Mac (GitHub runners), each:** unit 28/28 · desktop end to end 32/32 · headless master 14/14. **Also:** Android app on Android 15 emulator 12/12 · packaged EXEs 12/12 · live with real AI models 9/9 (including real tasks on Wikipedia) · UI check of 20 screens.
+**Tested on this build (Windows):** unit 35/35 · desktop end to end 46/46 · headless master 14/14 · Android app on Android 15 emulator 13/13 · packaged EXEs 12/12 · Raven Wi-Fi started and stopped live on a Windows PC. **Also run on every push on Windows, an Apple Silicon Mac and an Intel Mac (GitHub runners).** Live with real AI models 9/9 on the previous build.
 
-**Not yet tested:** a physical Android phone, two different real networks, tasks on sites that need your sign-in. Details: [docs/KNOWN-LIMITATIONS.md](https://github.com/nagasaipradhyumnapoola/Raven_Browser/blob/main/docs/KNOWN-LIMITATIONS.md).
+**Not yet tested:** a second computer actually joining Raven Wi-Fi, a physical Android phone, two different real networks, tasks on sites that need your sign-in. Details: [docs/KNOWN-LIMITATIONS.md](https://github.com/nagasaipradhyumnapoola/Raven_Browser/blob/main/docs/KNOWN-LIMITATIONS.md).
