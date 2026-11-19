@@ -16,6 +16,6 @@
 
 Not code-signed: Windows SmartScreen → *More info → Run anyway*; Mac → right-click the app → *Open* (or System Settings → Privacy & Security → *Open Anyway*); Android asks to allow installing the APK.
 
-**Tested on this build (Windows):** unit 35/35 · desktop end to end 46/46 · headless master 14/14 · Android app on Android 15 emulator 13/13 · packaged EXEs 12/12 · Raven Wi-Fi started and stopped live on a Windows PC. **Also run on every push on Windows, an Apple Silicon Mac and an Intel Mac (GitHub runners).** Live with real AI models 9/9 on the previous build.
+**Tested on this build (Windows):** unit 35/35 · desktop end to end 47/47 · headless master 14/14 · Android app on Android 15 emulator 13/13 · packaged EXEs 12/12 · Raven Wi-Fi started and stopped live on a Windows PC. **Also run on every push on Windows, an Apple Silicon Mac and an Intel Mac (GitHub runners).** Live with real AI models 9/9 on the previous build.
 
 **Not yet tested:** a second computer actually joining Raven Wi-Fi, a physical Android phone, two different real networks, tasks on sites that need your sign-in. Details: [docs/KNOWN-LIMITATIONS.md](https://github.com/nagasaipradhyumnapoola/Raven_Browser/blob/main/docs/KNOWN-LIMITATIONS.md).

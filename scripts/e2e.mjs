@@ -329,6 +329,8 @@ const browserScript = `(async () => {
   await new Promise(r => setTimeout(r, 1500));
   const sv = (await inv('debugView')).data;
   result.signIn = { ua: sv.ua, url: (sv.url || '').slice(0, 60), title: win.tabs.find(t => t.id === win.activeId).title };
+  // What Google's own page scripts see (they compare it with the headers).
+  result.signInJs = (await inv('debugPage', 'eval', 'JSON.stringify({ ua: navigator.userAgent, uad: typeof navigator.userAgentData, vendor: navigator.vendor, chrome: typeof window.chrome, oscpu: navigator.oscpu || null })')).data;
   await inv('navigate', 'https://example.com/');
   await until(() => { const t = win.tabs.find(t => t.id === win.activeId); return t && !t.loading && t.title === 'Example Domain'; }, 30000, 'back to normal');
   result.uaAfterSignIn = (await inv('debugView')).data.ua;
@@ -463,6 +465,8 @@ if (bres) {
   check('the page fits exactly inside the window (no cut-off right or bottom)', fr?.bounds && fr.bounds.x + fr.bounds.width <= fr.content.width && fr.bounds.y + fr.bounds.height <= fr.content.height && Math.abs(fr.bounds.width - fr.area.w) <= 2 && Math.abs(fr.bounds.height - fr.area.h) <= 2, JSON.stringify(fr));
   check('toolbar zoom buttons: + gives 110%, two − give 90%, clicking the % resets to 100%', bres.zoomAfterIn === 110 && bres.zoomAfterOut === 90 && bres.zoomAfterReset === 100, `${bres.zoomAfterIn} / ${bres.zoomAfterOut} / ${bres.zoomAfterReset}`);
   check("Google's robot check turns into the same search on DuckDuckGo", /duckduckgo\.com\/\?q=raven/.test(bres.robotFallback ?? ''), bres.robotFallback);
+  const sj = (() => { try { return JSON.parse(bres.signInJs || 'null'); } catch { return null; } })();
+  check("Google sign-in page's own scripts also see Firefox (no Chromium-only features), so Google does not reject the browser", sj && /Firefox\//.test(sj.ua) && sj.uad === 'undefined' && sj.vendor === '' && sj.chrome === 'undefined' && !!sj.oscpu, bres.signInJs);
   check('Google sign-in page opens and presents as Firefox (Google blocks embedded browsers); normal pages stay Chromium', /Firefox\//.test(bres.signIn?.ua ?? '') && !/Electron/.test(bres.signIn?.ua ?? '') && /accounts\.google\./.test(bres.signIn?.url ?? '') && /Chrome\//.test(bres.uaAfterSignIn ?? '') && !/Firefox/.test(bres.uaAfterSignIn ?? ''), JSON.stringify({ signIn: bres.signIn, after: (bres.uaAfterSignIn || '').slice(-40) }));
   check('signing in offers "Save password" for the right site and username', bres.pwOffer?.username === 'alice' && /^http:\/\/127\.0\.0\.1:\d+$/.test(bres.pwOffer?.origin ?? '') && bres.pwOffer.bar && bres.pwOffer.update === false, JSON.stringify(bres.pwOffer));
   check('Save stores the login (encrypted on disk, never in clear text)', (bres.pwSaved ?? []).some((x) => x.startsWith('alice@')) && !fs.readFileSync(path.join(out, 'browser-data', 'passwords.json'), 'utf8').includes('hunter2-secret'), JSON.stringify(bres.pwSaved));

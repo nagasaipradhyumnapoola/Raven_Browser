@@ -51,6 +51,10 @@ export class Hotspot {
   private timer: NodeJS.Timeout | null = null;
   private want: { ssid: string; passphrase: string } | null = null;
   private busy = false;
+  /** Raven turned off Windows' "stop the hotspot after 5 minutes with no devices"; put it back when done. */
+  private restoreTimeout = false;
+  /** Times Windows switched the hotspot off on its own (each restart drops this PC's Wi-Fi for a few seconds). */
+  private restarts: number[] = [];
 
   constructor(private onChange: () => void) {}
 
@@ -79,21 +83,36 @@ export class Hotspot {
     this.want = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    if (!this.supported || this.status.state === 'off') return this.set({ state: 'off', clients: 0, error: null });
+    this.restarts = [];
+    if (!this.supported || (this.status.state === 'off' && !this.restoreTimeout)) return this.set({ state: 'off', clients: 0, error: null });
+    const restore = this.restoreTimeout;
+    this.restoreTimeout = false;
     await runPs(`
-AwaitAction ($tm.StopTetheringAsync()) 2>$null
+if ("$($tm.TetheringOperationalState)" -ne 'Off') { AwaitAction ($tm.StopTetheringAsync()) }
+if ($env:RAVEN_RESTORE -eq '1') { try { AwaitAction ($tmType::EnableNoConnectionsTimeoutAsync()) } catch {} }
 Write-Output 'RESULT {"state":"off"}'
-`).catch(() => {});
+`, { RAVEN_RESTORE: restore ? '1' : '0' }).catch(() => {});
     this.set({ state: 'off', clients: 0, error: null });
   }
 
   private async check(): Promise<void> {
     if (!this.want || this.busy) return;
+    // Windows turned it off by itself too often: stop restarting (every restart drops this PC's Wi-Fi briefly).
+    const now = Date.now();
+    this.restarts = this.restarts.filter((t) => now - t < 30 * 60_000);
+    if (this.restarts.length >= 3) {
+      if (this.status.state !== 'error') this.set({ state: 'error', clients: 0, error: 'Windows keeps switching Raven Wi-Fi off, so Raven stopped restarting it (each restart briefly drops this computer’s Wi-Fi). Turn it off and on again to retry.' });
+      return;
+    }
     this.busy = true;
     if (this.status.state !== 'on') this.set({ state: 'starting', ssid: this.want.ssid, error: null });
     try {
       const r = await runPs(
         `
+# Windows stops a hotspot after 5 minutes with no devices; restarting it drops this PC's Wi-Fi. Keep it from stopping.
+$timeoutChanged = 0
+try { if ($tmType::IsNoConnectionsTimeoutEnabled()) { AwaitAction ($tmType::DisableNoConnectionsTimeoutAsync()); $timeoutChanged = 1 } } catch {}
+$wasOn = [int]("$($tm.TetheringOperationalState)" -eq 'On')
 $cfg = $tm.GetCurrentAccessPointConfiguration()
 if ($cfg.Ssid -ne $env:RAVEN_SSID -or $cfg.Passphrase -ne $env:RAVEN_PASS) {
   if ("$($tm.TetheringOperationalState)" -eq 'On') { AwaitAction ($tm.StopTetheringAsync()) }
@@ -105,11 +124,14 @@ if ("$($tm.TetheringOperationalState)" -ne 'On') {
   $res = Await ($tm.StartTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult])
   if ("$($res.Status)" -ne 'Success') { Write-Output ('RESULT {"state":"error","error":"Windows could not start the hotspot (' + $res.Status + ').' + '"}'); exit }
 }
-Write-Output ('RESULT {"state":"on","clients":' + $tm.ClientCount + '}')
+Write-Output ('RESULT {"state":"on","clients":' + $tm.ClientCount + ',"wasOn":' + $wasOn + ',"timeoutChanged":' + $timeoutChanged + '}')
 `,
         { RAVEN_SSID: this.want.ssid, RAVEN_PASS: this.want.passphrase },
       );
       if (!this.want) return;
+      if (r.timeoutChanged === 1) this.restoreTimeout = true;
+      // It was on before and Windows had turned it off: count that restart.
+      if (r.state === 'on' && r.wasOn === 0 && this.status.state === 'on') this.restarts.push(Date.now());
       this.set({ state: r.state ?? 'error', clients: Number(r.clients ?? 0), error: r.error ?? null, ssid: this.want.ssid });
     } finally {
       this.busy = false;

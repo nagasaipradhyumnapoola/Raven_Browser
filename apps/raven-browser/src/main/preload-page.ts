@@ -2,7 +2,44 @@
 // It only (1) notices when a login form is sent so Raven can offer to save it, and (2) fills a saved login
 // when the person clicks into a login field. The site (origin) is decided by Raven's main process from the frame
 // itself, never from anything this script says.
-import { ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
+import { isSignInHost } from '../../../../packages/shared/src/signin';
+
+// (3) Google's sign-in page only: its scripts see Firefox, the same as the request headers say. Google refuses
+// Chromium-based "embedded" browsers, and a Firefox user agent next to Chromium-only JavaScript features reads
+// as a disguised browser and is rejected too. Runs before any page script.
+if (isSignInHost(location.hostname)) {
+  try {
+    contextBridge.executeInMainWorld({
+      func: (ua: string, oscpu: string) => {
+        const def = (o: object, k: string, v: unknown) => {
+          try {
+            Object.defineProperty(o, k, { get: () => v, configurable: true });
+          } catch {
+            /* keep going */
+          }
+        };
+        const N = Navigator.prototype;
+        def(N, 'userAgent', ua);
+        def(N, 'appVersion', '5.0 (Windows)');
+        def(N, 'vendor', '');
+        def(N, 'productSub', '20100101');
+        def(N, 'oscpu', oscpu);
+        def(N, 'buildID', '20181001000000');
+        def(N, 'userAgentData', undefined);
+        try {
+          delete (window as any).chrome;
+        } catch {
+          /* not deletable */
+        }
+        def(window, 'chrome', undefined);
+      },
+      args: [navigator.userAgent, /Macintosh/.test(navigator.userAgent) ? 'Intel Mac OS X 10.15' : 'Windows NT 10.0; Win64; x64'],
+    });
+  } catch {
+    /* older Electron: headers alone */
+  }
+}
 
 const USERISH = /user|login|email|e-mail|identifier|account|phone|mobile|handle/i;
 
